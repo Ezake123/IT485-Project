@@ -11,6 +11,7 @@ from playwright.async_api import async_playwright
 #
 # Scans the UMB course listings using their website: https://online.umb.edu/courses/
 # Saves the courses and their data as JSON file for now, and will implement to connect with SupaBase later
+# Created with Gemini Flash 3.8 using agentic engineering
 #-------------------------
 
 #-------------------------
@@ -25,9 +26,11 @@ from playwright.async_api import async_playwright
 
 BASE_URL = "https://online.umb.edu/courses/"
 OUTPUT_FILE = "umb_courses.json"
-MAX_SCRAPE_TIME_SECONDS = None  # Set to a number (e.g. 1800) for a timeout limit
+MAX_SCRAPE_TIME_SECONDS = None  # Set to a number of seconds (e.g., 1800) if you want an auto-timeout
+CONCURRENCY_LIMIT = 6          # Number of course detail tabs processing simultaneously
 
 def clean_text(text: str) -> str:
+    """Normalizes Unicode characters, replaces dashes and whitespace entities."""
     if not text:
         return ""
     text = unicodedata.normalize("NFKD", text)
@@ -36,6 +39,7 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 def format_clock_time(raw: str, default_period: str = "") -> str:
+    """Standardizes time inputs like '5p.m.', '11AM', or '11' into 'HH:MM AM/PM'."""
     if not raw or raw.upper() in ["TBA", "ONLINE", "TBD"]:
         return "TBA"
 
@@ -62,10 +66,16 @@ def format_clock_time(raw: str, default_period: str = "") -> str:
     return f"{hours}:{minutes} {period}"
 
 def parse_schedule(raw_time_str: str):
+    """
+    Separates days of the week, start_time, and end_time.
+    Example: 'We 5p.m. - 9p.m.' -> ('We', '5:00 PM', '9:00 PM')
+             'MoWeFr 11AM - 11:50AM' -> ('MoWeFr', '11:00 AM', '11:50 AM')
+    """
     raw_time_str = clean_text(raw_time_str)
     if not raw_time_str or raw_time_str.upper() in ["TBA", "ONLINE", "TBD"]:
         return "TBA", "TBA", "TBA"
 
+    # Match consecutive day tokens: Mo, Tu, We, Th, Fr, Sa, Su
     day_match = re.match(r"^((?:Mo|Tu|We|Th|Fr|Sa|Su)+)\s*(.*)$", raw_time_str, re.IGNORECASE)
     days = "TBA"
     time_part = raw_time_str
@@ -105,12 +115,18 @@ def parse_course_detail(html_content: str, detail_url: str) -> dict:
         bc_elem = soup.select_one(".breadcrumbs, nav, .l-page-sidebar")
         breadcrumb_text = clean_text(bc_elem.get_text()) if bc_elem else ""
 
-    # Allows 2 to 8 uppercase letters to capture long department prefixes like ACDTSP
-    course_match = re.search(r"\b([A-Z]{2,8}\s+\d{1,4}[A-Z]?)\b", breadcrumb_text)
+    # Slice before 'Class #' to preserve hyphens (e.g. INTR-D) and spaces
+    if "Class #" in breadcrumb_text:
+        course_name = breadcrumb_text.split("Class #")[0].strip()
+    elif "Class" in breadcrumb_text:
+        course_name = breadcrumb_text.split("Class")[0].strip()
+    else:
+        match = re.search(r"((?:[A-Z0-9\-]+\s+)+\d{1,4}[A-Z]?)", breadcrumb_text)
+        course_name = match.group(1).strip() if match else ""
+
     class_match = re.search(r"Class\s*#?\s*(\d+)", breadcrumb_text, re.IGNORECASE)
     section_match = re.search(r"Section\s*([0-9A-Za-z]+)", breadcrumb_text, re.IGNORECASE)
 
-    course_name = course_match.group(1).strip() if course_match else ""
     class_code = class_match.group(1).strip() if class_match else ""
     section = section_match.group(1).strip() if section_match else ""
 
@@ -187,7 +203,30 @@ def parse_course_detail(html_content: str, detail_url: str) -> dict:
         "url": detail_url
     }
 
+async def fetch_course(context, url: str, semaphore: asyncio.Semaphore):
+    """Worker task: navigates to a detail page with blocked media and extracts records."""
+    async with semaphore:
+        page = await context.new_page()
+        # Abort images, fonts, and stylesheets to maximize throughput
+        await page.route(
+            "**/*",
+            lambda route: route.abort()
+            if route.request.resource_type in ["image", "media", "font"]
+            else route.continue_()
+        )
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_selector("#courseContent, table#courseOverview", timeout=4000)
+            content = await page.content()
+            return parse_course_detail(content, url)
+        except Exception as e:
+            print(f"  Skipping {url} (Error: {e})")
+            return None
+        finally:
+            await page.close()
+
 def save_and_display(results: list):
+    """Saves accumulated records to disk and prints formatted status."""
     if not results:
         print("\nNo course records were scraped.")
         return
@@ -198,7 +237,6 @@ def save_and_display(results: list):
     print("\n" + "=" * 40)
     print(f"SAVED {len(results)} RECORDS TO {OUTPUT_FILE}")
     print("=" * 40)
-    print(json.dumps(results[:2], indent=2, ensure_ascii=False))
 
 async def run_scraper():
     results = []
@@ -211,51 +249,51 @@ async def run_scraper():
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             )
-            page = await context.new_page()
+            catalog_page = await context.new_page()
 
             print(f"Loading {BASE_URL}...")
-            await page.goto(BASE_URL, wait_until="networkidle")
+            await catalog_page.goto(BASE_URL, wait_until="networkidle")
 
-            # 1. Target the latest semester tab
-            semester_tabs = page.locator('a[href*="/courses/"]:has-text("202"), button:has-text("202")')
+            # 1. Detect and select latest semester tab
+            semester_tabs = catalog_page.locator('a[href*="/courses/"]:has-text("202"), button:has-text("202")')
             tab_count = await semester_tabs.count()
             if tab_count > 0:
                 latest_tab = semester_tabs.nth(tab_count - 1)
                 semester_label = (await latest_tab.inner_text()).strip()
                 print(f"Selected semester: {semester_label}")
                 await latest_tab.click()
-                await page.wait_for_timeout(2000)
+                await catalog_page.wait_for_timeout(2000)
 
-            base_semester_url = page.url.split("?")[0].rstrip("/") + "/"
-            detail_worker = await context.new_page()
+            base_semester_url = catalog_page.url.split("?")[0].rstrip("/") + "/"
+            semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 
-            # 2. Iterate page-by-page and scrape immediately
+            # 2. Iterate catalog pages (?page=1&, ?page=2&, ...)
             page_num = 1
             while True:
                 paged_url = f"{base_semester_url}?page={page_num}&"
                 print(f"\n--- [Page {page_num}] Fetching: {paged_url} ---")
-                await page.goto(paged_url, wait_until="networkidle")
+                await catalog_page.goto(paged_url, wait_until="networkidle")
 
-                # Verify end condition
-                no_results = page.locator('#search-results:has-text("No results found"), .results_main:has-text("No results found")')
+                # Verify end condition: '#search-results' showing 'No results found'
+                no_results = catalog_page.locator('#search-results:has-text("No results found"), .results_main:has-text("No results found")')
                 if await no_results.count() > 0:
                     print(f"Reached end of catalog (No results found on page {page_num}).")
                     break
 
                 # Expand accordions on current page
-                multi_buttons = page.locator('button:has-text("Multiple Sections"), a:has-text("Multiple Sections"), tr:has-text("Multiple Sections")')
+                multi_buttons = catalog_page.locator('button:has-text("Multiple Sections"), a:has-text("Multiple Sections"), tr:has-text("Multiple Sections")')
                 count_multi = await multi_buttons.count()
                 for i in range(count_multi):
                     try:
                         btn = multi_buttons.nth(i)
                         if await btn.is_visible():
                             await btn.click()
-                            await page.wait_for_timeout(60)
+                            await catalog_page.wait_for_timeout(50)
                     except Exception:
                         continue
 
-                # Extract links on current page
-                page_html = await page.content()
+                # Collect detail URLs
+                page_html = await catalog_page.content()
                 soup = BeautifulSoup(page_html, "html.parser")
                 current_page_links = []
 
@@ -271,29 +309,23 @@ async def run_scraper():
                     print(f"No detail links found on page {page_num}. Ending pagination.")
                     break
 
-                print(f"Found {len(current_page_links)} courses on Page {page_num}. Scraping details now...")
+                print(f"Found {len(current_page_links)} courses on Page {page_num}. Scraping concurrently ({CONCURRENCY_LIMIT} workers)...")
 
-                # Scrape each course on this page right away
-                for idx, url in enumerate(current_page_links, 1):
-                    try:
-                        print(f"  [{idx}/{len(current_page_links)}] Scraping: {url}")
-                        await detail_worker.goto(url, wait_until="domcontentloaded", timeout=20000)
-                        await detail_worker.wait_for_selector("#courseContent, table#courseOverview", timeout=4000)
+                # Dispatch parallel scraping tasks for current page links
+                tasks = [fetch_course(context, url, semaphore) for url in current_page_links]
+                page_results = await asyncio.gather(*tasks)
 
-                        content = await detail_worker.content()
-                        data = parse_course_detail(content, url)
-                        results.append(data)
-                    except Exception as e:
-                        print(f"  Skipping {url} (Error: {e})")
+                valid_entries = [r for r in page_results if r is not None]
+                results.extend(valid_entries)
 
-                # Auto-save after each completed page
+                # Incremental auto-save after every catalog page
                 with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
                     json.dump(results, f, indent=2, ensure_ascii=False)
                 print(f"Page {page_num} completed. Total courses saved so far: {len(results)}")
 
                 page_num += 1
 
-            await detail_worker.close()
+            await catalog_page.close()
 
     except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n\n[!] Manual interruption detected (Ctrl + C). Stopping scraper gracefully...")
