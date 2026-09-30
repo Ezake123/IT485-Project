@@ -1,5 +1,6 @@
 # IT485 - Group H.W.H.J Project Classpick
 UMASS Boston, Fall 2026
+
 By: Jiahong Huang, Hunter Ward, Hasan Algafri, William Ramos
 
 This project is about creating an optimized automated schedule planning tool for UMB students to save time from creating their schedule by scanning their degree audit. Not only will it help students, it can also assist academic counselor to provide better and faster guidance. 
