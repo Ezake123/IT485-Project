@@ -31,4 +31,6 @@ This project is about creating an optimized automated schedule planning tool for
 ## Cloning our repo
 git clone https://github.com/Ezake123/IT485-Project.git
 
-
+## Acknowledgments
+- Built and architected with technical assistance from **Google Gemini**.
+- Course data parsed from the University of Massachusetts Boston online catalog.
