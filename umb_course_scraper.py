@@ -28,7 +28,6 @@ OUTPUT_FILE = "umb_courses.json"                # Temporary file, will be remove
 MAX_SCRAPE_TIME_SECONDS = None                  # Set to a number of seconds (e.g., 1800) if you want an auto-timeout
 CONCURRENCY_LIMIT = 6                           # Number of course detail tabs processing simultaneously
 
-
 #-----------------------------------------------------------------
 # Changes the Unicode characters into normal and common 
 # characters strictly only the ones found on keyboard
@@ -405,14 +404,9 @@ async def fetch_course(context, url: str, semaphore: asyncio.Semaphore):
 # Create the filename with the year and semester of courses it is scraping
 #-----------------------------------------------------------------
 
-def generate_output_filename(semester_text: str) -> str:
-    season_match = re.search(r"\b(Spring|Summer|Fall|Winter)\b", semester_text, re.IGNORECASE)
-    year_match = re.search(r"\b(\d{4})\b", semester_text)
-
-    season = season_match.group(1).capitalize() if season_match else "Unknown"
-    # If the webpage title doesn't contain a 4-digit year, use the current year
-    year = year_match.group(1) if year_match else str(datetime.now().year)
-
+def generate_output_filename(season_str: str) -> str:
+    year = str(datetime.now().year)
+    season = season_str.capitalize()
     return f"{year}_{season}_courses.json"
 
 #-----------------------------------------------------------------
@@ -439,7 +433,7 @@ async def run_scraper():
     results = []
     seen = set()
     browser = None
-    output_file = "courses.json"  # Fallback default
+    output_file = "courses.json"
 
     try:
         async with async_playwright() as p:
@@ -449,38 +443,52 @@ async def run_scraper():
             )
             catalog_page = await context.new_page()
 
-            print(f"Loading {BASE_URL}...")
+            print(f"Loading initial landing page: {BASE_URL}...")
             await catalog_page.goto(BASE_URL, wait_until="networkidle")
 
-            # Extract the semester directly from the hero banner
-            hero_title = catalog_page.locator(".hero__title, .hero_title")
-            if await hero_title.count() > 0:
-                semester_label = (await hero_title.first.inner_text()).strip()
-            else:
-                semester_label = "Courses"
+            # 1. Inspect the hero banner matching <div class="hero_title">
+            hero_elem = catalog_page.locator(".hero_title, .hero__title")
+            hero_text = ""
+            if await hero_elem.count() > 0:
+                hero_text = (await hero_elem.first.inner_text()).strip()
 
-            # Generates filename like: 2026_Fall_courses.json or 2026_Spring_courses.json
-            output_file = generate_output_filename(semester_label)
-            print(f"Detected semester banner: '{semester_label}' -> Saving to: '{output_file}'")
+            print(f"Hero banner found: '{hero_text}'")
 
-            # Always base the pagination URLs on BASE_URL
-            base_semester_url = BASE_URL.split("?")[0].rstrip("/") + "/"
+            # 2. Extract the season token ('Fall', 'Spring', 'Summer', 'Winter')
+            match = re.search(r"\b(Fall|Spring|Summer|Winter)\b", hero_text, re.IGNORECASE)
+            season = match.group(1).capitalize() if match else "Unknown"
+            season_lower = season.lower()  # 'fall', 'spring', 'summer', 'winter'
+
+            # 3. Construct the clean term base URL and output filename
+            term_base_url = f"https://online.umb.edu/courses/{season_lower}/"
+            output_file = generate_output_filename(season)
+            print(f"Active Term: '{season}' | Target URL: '{term_base_url}' | Output File: '{output_file}'")
+
             semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
-
-            # 2. Iterate catalog pages
             page_num = 1
+
+            # 4. Iterate pages: https://online.umb.edu/courses/fall/?page=1&
             while True:
-                paged_url = f"{base_semester_url}?page={page_num}&"
+                paged_url = f"{term_base_url}?page={page_num}&"
                 print(f"\n--- [Page {page_num}] Fetching: {paged_url} ---")
                 await catalog_page.goto(paged_url, wait_until="networkidle")
 
-                no_results = catalog_page.locator('#search-results:has-text("No results found"), .results_main:has-text("No results found")')
+                # Check if catalog end reached
+                no_results = catalog_page.locator(
+                    '#search-results:has-text("No results found"), '
+                    '.results_main:has-text("No results found"), '
+                    ':has-text("No courses found")'
+                )
                 if await no_results.count() > 0:
                     print(f"Reached end of catalog (No results found on page {page_num}).")
                     break
 
                 # Expand accordions on current page
-                multi_buttons = catalog_page.locator('button:has-text("Multiple Sections"), a:has-text("Multiple Sections"), tr:has-text("Multiple Sections")')
+                multi_buttons = catalog_page.locator(
+                    'button:has-text("Multiple Sections"), '
+                    'a:has-text("Multiple Sections"), '
+                    'tr:has-text("Multiple Sections")'
+                )
                 count_multi = await multi_buttons.count()
                 for i in range(count_multi):
                     try:
@@ -499,7 +507,7 @@ async def run_scraper():
                 for a in soup.select("a[href*='/detail/']"):
                     href = a.get("href")
                     if href:
-                        full_url = urljoin(BASE_URL, href)
+                        full_url = urljoin(paged_url, href)
                         if full_url not in seen:
                             seen.add(full_url)
                             current_page_links.append(full_url)
@@ -508,7 +516,7 @@ async def run_scraper():
                     print(f"No detail links found on page {page_num}. Ending pagination.")
                     break
 
-                print(f"Found {len(current_page_links)} courses on Page {page_num}. Scraping concurrently ({CONCURRENCY_LIMIT} workers)...")
+                print(f"Found {len(current_page_links)} courses on Page {page_num}. Scraping ({CONCURRENCY_LIMIT} workers)...")
 
                 tasks = [fetch_course(context, url, semaphore) for url in current_page_links]
                 page_results = await asyncio.gather(*tasks)
@@ -516,7 +524,7 @@ async def run_scraper():
                 valid_entries = [r for r in page_results if r is not None]
                 results.extend(valid_entries)
 
-                # Incremental auto-save using the dynamic filename
+                # Incremental auto-save into 2026_Fall_courses.json
                 with open(output_file, "w", encoding="utf-8") as f:
                     json.dump(results, f, indent=2, ensure_ascii=False)
                 print(f"Page {page_num} completed. Total courses saved so far: {len(results)}")
