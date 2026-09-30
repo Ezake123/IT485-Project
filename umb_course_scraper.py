@@ -2,35 +2,39 @@ import asyncio
 import json
 import re
 import unicodedata
+from datetime import datetime
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
-#-------------------------
+#-----------------------------------------------------------------
 # Descriptions:
 #
-# Scans the UMB course listings using their website: https://online.umb.edu/courses/
-# Saves the courses and their data as JSON file for now, and will implement to connect with SupaBase later
-# Created with Gemini Flash 3.8 using agentic engineering
-#-------------------------
-
-#-------------------------
-# Requirements:
+# - Scans the UMB course listings using their website: https://online.umb.edu/courses/
+# - Saves the courses and their data as JSON file for now, and will implement to connect with SupaBase later
+# - Created with Gemini Flash 3.8 using agentic engineering
 #
 # Require to run these following commands for this script to work:
+#
 #   pip install playwright beautifulsoup4
 #   playwright install chromium
-#
+# 
+# How to use it:
 # Type "python UMB_course_scraper.py" to run and press "Ctrl + C" to end it early
-#-------------------------
+#-----------------------------------------------------------------
 
-BASE_URL = "https://online.umb.edu/courses/"
-OUTPUT_FILE = "umb_courses.json"
-MAX_SCRAPE_TIME_SECONDS = None  # Set to a number of seconds (e.g., 1800) if you want an auto-timeout
-CONCURRENCY_LIMIT = 6          # Number of course detail tabs processing simultaneously
+BASE_URL = "https://online.umb.edu/courses/"    # The website where it scans for courses
+OUTPUT_FILE = "umb_courses.json"                # Temporary file, will be removed later to solely input into Supabase
+MAX_SCRAPE_TIME_SECONDS = None                  # Set to a number of seconds (e.g., 1800) if you want an auto-timeout
+CONCURRENCY_LIMIT = 6                           # Number of course detail tabs processing simultaneously
+
+
+#-----------------------------------------------------------------
+# Changes the Unicode characters into normal and common 
+# characters strictly only the ones found on keyboard
+#-----------------------------------------------------------------
 
 def clean_text(text: str) -> str:
-    """Normalizes Unicode characters, replaces dashes and whitespace entities."""
     if not text:
         return ""
     text = unicodedata.normalize("NFKD", text)
@@ -38,13 +42,43 @@ def clean_text(text: str) -> str:
     text = re.sub(r"[\s\xa0]+", " ", text)
     return text.strip()
 
-def format_clock_time(raw: str, default_period: str = "") -> str:
-    """Standardizes time inputs like '5p.m.', '11AM', or '11' into 'HH:MM AM/PM'."""
-    if not raw or raw.upper() in ["TBA", "ONLINE", "TBD"]:
-        return "TBA"
+#-----------------------------------------------------------------
+# Splits course identifier into course_name and course_number
+#-----------------------------------------------------------------
+
+def split_course_identifier(raw_name: str) -> tuple[str, str]:
+    raw_name = clean_text(raw_name)
+    match = re.search(r"^([A-Z0-9\- ]+?)\s*(\d{1,4}[A-Z]?)$", raw_name, re.IGNORECASE)
+    if match:
+        course_name = match.group(1).strip().upper()
+        course_number = match.group(2).strip().upper()
+        return course_name, course_number
+    return raw_name, ""
+
+
+#-----------------------------------------------------------------
+# Converts credits string into a numeric float/int or None
+#-----------------------------------------------------------------
+
+def parse_credits(raw_credits: str) -> int | None:
+    if not raw_credits:
+        return None
+    match = re.search(r"\d", raw_credits)
+    if match:
+        return int(match.group(0))
+    return None
+
+#-----------------------------------------------------------------
+# Changes the time format since they do weird format like "p.m."
+#-----------------------------------------------------------------
+
+def format_clock_time(raw: str, default_period: str = "") -> str | None:
+    if not raw or raw.upper() in ["TBA", "ONLINE", "TBD", "NONE"]:
+        return None
 
     raw = clean_text(raw).strip()
 
+    # Determine AM/PM
     period = ""
     if re.search(r"a\.?m\.?", raw, re.IGNORECASE):
         period = "AM"
@@ -55,33 +89,39 @@ def format_clock_time(raw: str, default_period: str = "") -> str:
 
     time_match = re.search(r"(\d{1,2})(?::(\d{2}))?", raw)
     if not time_match:
-        return raw
+        return None
 
     hours = int(time_match.group(1))
-    minutes = time_match.group(2) if time_match.group(2) else "00"
+    minutes = int(time_match.group(2)) if time_match.group(2) else 0
 
-    if not period:
-        period = "PM" if hours < 8 else "AM"
+    # Convert to 24-hour format
+    if period == "PM" and hours < 12:
+        hours += 12
+    elif period == "AM" and hours == 12:
+        hours = 0
 
-    return f"{hours}:{minutes} {period}"
+    return f"{hours:02d}:{minutes:02d}:00"
 
-def parse_schedule(raw_time_str: str):
-    """
-    Separates days of the week, start_time, and end_time.
-    Example: 'We 5p.m. - 9p.m.' -> ('We', '5:00 PM', '9:00 PM')
-             'MoWeFr 11AM - 11:50AM' -> ('MoWeFr', '11:00 AM', '11:50 AM')
-    """
+#-----------------------------------------------------------------
+# Converts specificly the schedule into 3 values of days (days of 
+# the week), starting time, and ending time because UMB put them all 
+# onto one string like "We 5p.m. - 9p.m."
+#-----------------------------------------------------------------
+
+def parse_schedule(raw_time_str: str) -> tuple[list[str], str | None, str | None]:
     raw_time_str = clean_text(raw_time_str)
-    if not raw_time_str or raw_time_str.upper() in ["TBA", "ONLINE", "TBD"]:
-        return "TBA", "TBA", "TBA"
+    if not raw_time_str or raw_time_str.upper() in ["TBA", "ONLINE", "TBD", "NONE"]:
+        return [], None, None
 
-    # Match consecutive day tokens: Mo, Tu, We, Th, Fr, Sa, Su
+    # Match consecutive standard day abbreviations: Mo, Tu, We, Th, Fr, Sa, Su
     day_match = re.match(r"^((?:Mo|Tu|We|Th|Fr|Sa|Su)+)\s*(.*)$", raw_time_str, re.IGNORECASE)
-    days = "TBA"
+    days_list = []
     time_part = raw_time_str
 
     if day_match:
-        days = day_match.group(1).strip()
+        # Extract every two-character token
+        days_str = day_match.group(1).strip()
+        days_list = [d.capitalize() for d in re.findall(r"(?:Mo|Tu|We|Th|Fr|Sa|Su)", days_str, re.IGNORECASE)]
         time_part = day_match.group(2).strip()
 
     if "-" in time_part:
@@ -99,30 +139,152 @@ def parse_schedule(raw_time_str: str):
         start_time = format_clock_time(raw_start, default_period=end_period)
     elif time_part:
         start_time = format_clock_time(time_part)
-        end_time = "TBA"
+        end_time = None
     else:
-        start_time, end_time = "TBA", "TBA"
+        start_time, end_time = None, None
 
-    return days, start_time, end_time
+    return days_list, start_time, end_time
 
-def parse_course_detail(html_content: str, detail_url: str) -> dict:
+#-----------------------------------------------------------------
+# Converts credits text into two separate values of maximum capacity 
+# and the enrolled amount
+#-----------------------------------------------------------------
+
+def parse_capacity(raw_capacity: str) -> tuple[int | None, int | None]:
+    if not raw_capacity:
+        return None, None
+
+    # Find all sequences of digits
+    digits = [int(n) for n in re.findall(r"\d+", raw_capacity)]
+
+    if len(digits) >= 2:
+        enrolled, maximum_capacity = digits[0], digits[1]
+        return maximum_capacity, enrolled
+    elif len(digits) == 1:
+        # If only one number is provided, assume it is maximum capacity with 0 registered
+        return digits[0], 0
+
+    return None, None
+
+#-----------------------------------------------------------------
+# Cleans up prerequisites into:
+# - raw: Full original text
+# - courses: Conjunctive Normal Form (AND groups of OR options)
+# - min_credits: Required credits threshold (int or None)
+# - has_other_restrictions: True if non-course requirements exist
+#   like "CS student", it is hard to make a case for everything as
+#   the text are just inconsistant
+#-----------------------------------------------------------------
+
+def clean_prerequisites(raw_text: str) -> dict:
+    cleaned_raw = raw_text.strip() if raw_text else ""
+    
+    if not cleaned_raw or cleaned_raw.upper() in ["NONE", "N/A", "TBA"]:
+        return {
+            "raw": cleaned_raw or "None",
+            "courses": [],
+            "min_credits": None,
+            "has_other_restrictions": False
+        }
+
+    # 1. Extract credit threshold (e.g., "minimum of 60 credits", "15 credits")
+    min_credits = None
+    credit_match = re.search(r"(\d{1,3})\s*(?:or more\s*)?(?:degree\s*)?credits", cleaned_raw, re.IGNORECASE)
+    if credit_match:
+        min_credits = int(credit_match.group(1))
+
+    # 2. Detect other non-course restrictions (majors, standings, permissions, auditions)
+    restriction_patterns = [
+        r"\b(?:major|minor|student|matriculat\w+|status|standing|level|senior|junior|sophomore|freshman|graduate)\b",
+        r"\b(?:permission|consent|audition|prerequisite\s*test|placement\s*test|score|wpe|exam)\b",
+        r"\b(?:college\s+of|mgt|cm|degree\s+students?\s+only)\b"
+    ]
+    has_other_restrictions = any(
+        re.search(pat, cleaned_raw, re.IGNORECASE) for pat in restriction_patterns
+    )
+
+    # 3. Text cleanup for course extraction
+    normalized_text = cleaned_raw
+
+    # Normalize missing spaces in course codes (e.g. "ENGL101" -> "ENGL 101", "104or" -> "104 or")
+    normalized_text = re.sub(r"([A-Za-z]{2,8})(\d{2,4}[A-Za-z]?)", r"\1 \2", normalized_text)
+    normalized_text = re.sub(r"(\d{1,4}[A-Za-z]?)(or|and)\b", r"\1 \2", normalized_text, flags=re.IGNORECASE)
+
+    # Expand slash pairs (e.g. "BIOL 252/254" -> "BIOL 252 or BIOL 254")
+    def expand_slash(match):
+        dept = match.group(1)
+        num1 = match.group(2)
+        num2 = match.group(3)
+        return f"{dept} {num1} or {dept} {num2}"
+    normalized_text = re.sub(r"\b([A-Z]{2,8}(?:-[A-Z]+)?)\s*(\d{1,4}[A-Z]?)/(\d{1,4}[A-Z]?)\b", expand_slash, normalized_text)
+
+    # Standardize conjunctions
+    normalized_text = re.sub(r"&", " and ", normalized_text)
+    normalized_text = re.sub(r"(?i)\bco-?requisite\b", "", normalized_text)
+
+    # 4. Parse course codes into CNF groups (AND clauses containing OR alternatives)
+    and_clauses = re.split(r"\band\b|;|\.", normalized_text, flags=re.IGNORECASE)
+    structured_courses = []
+    last_dept = None
+
+    for clause in and_clauses:
+        or_options = re.split(r"\bor\b|,", clause, flags=re.IGNORECASE)
+        or_group = []
+
+        for segment in or_options:
+            matches = list(re.finditer(r"\b([A-Z]{2,8}(?:-[A-Z]+)?)\s*(\d{1,4}[A-Z]?)\b", segment))
+            for m in matches:
+                dept = m.group(1).upper()
+                num = m.group(2).upper()
+                last_dept = dept
+                course_obj = {"course_name": dept, "course_number": num}
+                if course_obj not in or_group:
+                    or_group.append(course_obj)
+
+            # Catch inherited department numbers (e.g., "AF 210 or 211")
+            if not matches and last_dept:
+                inherited_matches = re.finditer(r"\b(\d{3}[A-Z]?)\b", segment)
+                for im in inherited_matches:
+                    course_obj = {"course_name": last_dept, "course_number": im.group(1).upper()}
+                    if course_obj not in or_group:
+                        or_group.append(course_obj)
+
+        if or_group:
+            structured_courses.append(or_group)
+
+    return {
+        "raw": cleaned_raw,
+        "courses": structured_courses,
+        "min_credits": min_credits,
+        "has_other_restrictions": has_other_restrictions
+    }
+
+#-----------------------------------------------------------------
+# Scans through the rest of the webpage and gather the rest of the
+# data needed for the course by searching specific element name from
+# the html code
+#-----------------------------------------------------------------
+
+def parse_course_detail(html_content: str) -> dict:
     soup = BeautifulSoup(html_content, "html.parser")
 
-    # 1. Breadcrumbs: Course Code, Class Code, and Section Number
+    # 1. Gets Course Code, Class Code, and Section Number from the navigation bar
     last_li = soup.select_one(".course-breadcrumbs ul li:last-child")
     breadcrumb_text = clean_text(last_li.get_text()) if last_li else ""
     if not breadcrumb_text:
         bc_elem = soup.select_one(".breadcrumbs, nav, .l-page-sidebar")
         breadcrumb_text = clean_text(bc_elem.get_text()) if bc_elem else ""
 
-    # Slice before 'Class #' to preserve hyphens (e.g. INTR-D) and spaces
+    # Slice before 'Class #' to preserve hyphens and spaces
     if "Class #" in breadcrumb_text:
-        course_name = breadcrumb_text.split("Class #")[0].strip()
+        raw_identifier = breadcrumb_text.split("Class #")[0].strip()
     elif "Class" in breadcrumb_text:
-        course_name = breadcrumb_text.split("Class")[0].strip()
+        raw_identifier = breadcrumb_text.split("Class")[0].strip()
     else:
         match = re.search(r"((?:[A-Z0-9\-]+\s+)+\d{1,4}[A-Z]?)", breadcrumb_text)
-        course_name = match.group(1).strip() if match else ""
+        raw_identifier = match.group(1).strip() if match else ""
+
+    course_name, course_number = split_course_identifier(raw_identifier)
 
     class_match = re.search(r"Class\s*#?\s*(\d+)", breadcrumb_text, re.IGNORECASE)
     section_match = re.search(r"Section\s*([0-9A-Za-z]+)", breadcrumb_text, re.IGNORECASE)
@@ -131,7 +293,7 @@ def parse_course_detail(html_content: str, detail_url: str) -> dict:
     section = section_match.group(1).strip() if section_match else ""
 
     # 2. Overview table: #courseOverview
-    date_val, start_time, end_time, location, credits = "TBA", "TBA", "TBA", "", ""
+    days, start_time, end_time, location, raw_credits = [], None, None, "", ""
     overview_table = soup.select_one("table#courseOverview")
     if overview_table:
         cells = overview_table.select("tbody tr td")
@@ -144,27 +306,33 @@ def parse_course_detail(html_content: str, detail_url: str) -> dict:
             for line in lines:
                 if re.search(r"\d{1,2}/\d{1,2}/\d{2,4}", line):
                     continue
-                parsed_day, parsed_start, parsed_end = parse_schedule(line)
-                if parsed_day != "TBA" or parsed_start != "TBA":
-                    date_val = parsed_day
+                parsed_days, parsed_start, parsed_end = parse_schedule(line)
+                if parsed_days or parsed_start is not None:
+                    days = parsed_days
                     start_time = parsed_start
                     end_time = parsed_end
                     break
                 elif line.upper() == "TBA":
-                    date_val, start_time, end_time = "TBA", "TBA", "TBA"
+                    days, start_time, end_time = [], None, None
 
             location = clean_text(cells[1].get_text())
-            credits = clean_text(cells[2].get_text())
+            raw_credits = clean_text(cells[2].get_text())
 
-    # 3. Description & Prerequisites via explicit IDs
+    credits_val = parse_credits(raw_credits)
+
+    # 3. Gets Description, Prerequisites, and Gen Ed
     desc_elem = soup.select_one("#courseDescription")
     description = clean_text(desc_elem.get_text()) if desc_elem else ""
 
     prereq_elem = soup.select_one("#coursePrereq")
-    prerequisites = clean_text(prereq_elem.get_text()) if prereq_elem else "None"
+    raw_prerequisites = clean_text(prereq_elem.get_text()) if prereq_elem else "None"
+    prerequisites = clean_prerequisites(raw_prerequisites)
 
-    # 4. Course Details: Enrolled / Capacity & Instructors
-    capacity = ""
+    gened_elem = soup.select_one("#genedrequirements")
+    gen_ed = clean_text(gened_elem.get_text()) if gened_elem else None
+
+    # 4. Gets Enrolled/Capacity & Instructors from the Course Details section
+    raw_capacity = ""
     instructors = []
     details_grid = soup.select_one("#courseDetails")
     if details_grid:
@@ -173,7 +341,7 @@ def parse_course_detail(html_content: str, detail_url: str) -> dict:
             if "Enrolled / Capacity" in div_text or "Capacity" in div_text:
                 cap_match = re.search(r"(\d+\s*/\s*\d+|\d+)", div_text)
                 if cap_match:
-                    capacity = cap_match.group(1).replace(" ", "")
+                    raw_capacity = cap_match.group(1).replace(" ", "")
                 break
 
         inst_p = details_grid.select_one("#instructors")
@@ -187,24 +355,32 @@ def parse_course_detail(html_content: str, detail_url: str) -> dict:
                     br.replace_with("\n")
                 instructors = [clean_text(l) for l in inst_p.get_text().split("\n") if clean_text(l)]
 
+    # Parse into integers
+    maximum_capacity, enrolled = parse_capacity(raw_capacity)
+
     return {
         "course_name": course_name,
+        "course_number": course_number,
         "class_code": class_code,
         "section": section,
-        "date": date_val,
+        "days": days,
         "start_time": start_time,
         "end_time": end_time,
         "location": location,
-        "credits": credits,
+        "credits": credits_val,
         "description": description,
+        "gen_ed": gen_ed,
         "prerequisites": prerequisites,
-        "capacity": capacity,
-        "instructors": instructors,
-        "url": detail_url
+        "maximum_capacity": maximum_capacity,
+        "enrolled": enrolled,
+        "instructors": instructors
     }
 
+#-----------------------------------------------------------------
+# Prepares and opens the course detail page from the original webpage
+#-----------------------------------------------------------------
+
 async def fetch_course(context, url: str, semaphore: asyncio.Semaphore):
-    """Worker task: navigates to a detail page with blocked media and extracts records."""
     async with semaphore:
         page = await context.new_page()
         # Abort images, fonts, and stylesheets to maximize throughput
@@ -218,30 +394,52 @@ async def fetch_course(context, url: str, semaphore: asyncio.Semaphore):
             await page.goto(url, wait_until="domcontentloaded", timeout=20000)
             await page.wait_for_selector("#courseContent, table#courseOverview", timeout=4000)
             content = await page.content()
-            return parse_course_detail(content, url)
+            return parse_course_detail(content)
         except Exception as e:
             print(f"  Skipping {url} (Error: {e})")
             return None
         finally:
             await page.close()
 
-def save_and_display(results: list):
-    """Saves accumulated records to disk and prints formatted status."""
+#-----------------------------------------------------------------
+# Create the filename with the year and semester of courses it is scraping
+#-----------------------------------------------------------------
+
+def generate_output_filename(semester_text: str) -> str:
+    season_match = re.search(r"\b(Spring|Summer|Fall|Winter)\b", semester_text, re.IGNORECASE)
+    year_match = re.search(r"\b(\d{4})\b", semester_text)
+
+    season = season_match.group(1).capitalize() if season_match else "Unknown"
+    # If the webpage title doesn't contain a 4-digit year, use the current year
+    year = year_match.group(1) if year_match else str(datetime.now().year)
+
+    return f"{year}_{season}_courses.json"
+
+#-----------------------------------------------------------------
+# Saves records to JSON file (will be removed latered due to storing it on a database)
+#-----------------------------------------------------------------
+
+def save_and_display(results: list, output_filename: str):
     if not results:
         print("\nNo course records were scraped.")
         return
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    with open(output_filename, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
     print("\n" + "=" * 40)
-    print(f"SAVED {len(results)} RECORDS TO {OUTPUT_FILE}")
+    print(f"SAVED {len(results)} RECORDS TO {output_filename}")
     print("=" * 40)
+
+#-----------------------------------------------------------------
+# Starts the scraper process and prints results while it runs
+#-----------------------------------------------------------------
 
 async def run_scraper():
     results = []
     seen = set()
     browser = None
+    output_file = "courses.json"  # Fallback default
 
     try:
         async with async_playwright() as p:
@@ -254,27 +452,28 @@ async def run_scraper():
             print(f"Loading {BASE_URL}...")
             await catalog_page.goto(BASE_URL, wait_until="networkidle")
 
-            # 1. Detect and select latest semester tab
-            semester_tabs = catalog_page.locator('a[href*="/courses/"]:has-text("202"), button:has-text("202")')
-            tab_count = await semester_tabs.count()
-            if tab_count > 0:
-                latest_tab = semester_tabs.nth(tab_count - 1)
-                semester_label = (await latest_tab.inner_text()).strip()
-                print(f"Selected semester: {semester_label}")
-                await latest_tab.click()
-                await catalog_page.wait_for_timeout(2000)
+            # Extract the semester directly from the hero banner
+            hero_title = catalog_page.locator(".hero__title, .hero_title")
+            if await hero_title.count() > 0:
+                semester_label = (await hero_title.first.inner_text()).strip()
+            else:
+                semester_label = "Courses"
 
-            base_semester_url = catalog_page.url.split("?")[0].rstrip("/") + "/"
+            # Generates filename like: 2026_Fall_courses.json or 2026_Spring_courses.json
+            output_file = generate_output_filename(semester_label)
+            print(f"Detected semester banner: '{semester_label}' -> Saving to: '{output_file}'")
+
+            # Always base the pagination URLs on BASE_URL
+            base_semester_url = BASE_URL.split("?")[0].rstrip("/") + "/"
             semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
 
-            # 2. Iterate catalog pages (?page=1&, ?page=2&, ...)
+            # 2. Iterate catalog pages
             page_num = 1
             while True:
                 paged_url = f"{base_semester_url}?page={page_num}&"
                 print(f"\n--- [Page {page_num}] Fetching: {paged_url} ---")
                 await catalog_page.goto(paged_url, wait_until="networkidle")
 
-                # Verify end condition: '#search-results' showing 'No results found'
                 no_results = catalog_page.locator('#search-results:has-text("No results found"), .results_main:has-text("No results found")')
                 if await no_results.count() > 0:
                     print(f"Reached end of catalog (No results found on page {page_num}).")
@@ -311,15 +510,14 @@ async def run_scraper():
 
                 print(f"Found {len(current_page_links)} courses on Page {page_num}. Scraping concurrently ({CONCURRENCY_LIMIT} workers)...")
 
-                # Dispatch parallel scraping tasks for current page links
                 tasks = [fetch_course(context, url, semaphore) for url in current_page_links]
                 page_results = await asyncio.gather(*tasks)
 
                 valid_entries = [r for r in page_results if r is not None]
                 results.extend(valid_entries)
 
-                # Incremental auto-save after every catalog page
-                with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+                # Incremental auto-save using the dynamic filename
+                with open(output_file, "w", encoding="utf-8") as f:
                     json.dump(results, f, indent=2, ensure_ascii=False)
                 print(f"Page {page_num} completed. Total courses saved so far: {len(results)}")
 
@@ -332,13 +530,13 @@ async def run_scraper():
     except Exception as e:
         print(f"\n[!] Unexpected error encountered: {e}")
     finally:
-        save_and_display(results)
+        save_and_display(results, output_file)
         if browser:
             try:
                 await browser.close()
             except Exception:
                 pass
-
+                
 if __name__ == "__main__":
     try:
         if MAX_SCRAPE_TIME_SECONDS:

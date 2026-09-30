@@ -1,16 +1,35 @@
 import pdfplumber
 import re
 
-#-------------------------
+#-----------------------------------------------------------------
 # Scans the pdf for courses and categorized them into either
 # completed/in-progress and required courses
 # Heavily modify with Gemini Flash 3.8
-#-------------------------
+#-----------------------------------------------------------------
 
-#-------------------------
+#-----------------------------------------------------------------
+# Scans for total earned credits in the audit.
+# Matches patterns like "Earned: 102.00Credits" or "Earned: 102.00 Credits"
+#-----------------------------------------------------------------
+
+MAX_ALLOWED_PAGES = 20 # Audits should not be any more pages than this
+
+def earned_credits_scan(audit):
+    # Regex looks for 'Earned:', optional spaces, a decimal or integer number, 
+    # and optional spaces before 'Credits' (case-insensitive)
+    credit_re = re.compile(r"Earned:\s*(\d+(?:\.\d+)?)\s*Credits?", re.IGNORECASE)
+
+    for line in audit:
+        match = credit_re.search(line)
+        if match:
+            return float(match.group(1))
+
+    return 0.0
+
+#-----------------------------------------------------------------
 # Scans for completed/in-progress courses and return the list of them 
 # concatnated with the course name and number without spaces
-#-------------------------
+#-----------------------------------------------------------------
 
 def complete_course_scan(audit):
     completed_courses = []
@@ -33,11 +52,12 @@ def complete_course_scan(audit):
 
     return completed_courses
 
-#-------------------------
-# Figure out the required courses and returns a list of it in the where each requirement
-# is another list starting with the number of required courses needed to take following
-# with all the courses for that requirement
-#-------------------------
+#-----------------------------------------------------------------
+# Figure out the required courses and returns a list of it in the 
+# where each requirement is another list starting with the number 
+# of required courses needed to take following with all the courses 
+# for that requirement
+#-----------------------------------------------------------------
 
 def required_course_scan(all_lines):
     required_courses = []
@@ -107,7 +127,29 @@ def required_course_scan(all_lines):
                 elif current_dept and re.match(r"^\d{1,3}[A-Z]?$", tok):
                     first_course = f"{current_dept}{tok}"
                     
-                    # 1. Alternative pair separated by "or" (e.g. "BIOL 210 or 212" -> "BIOL210|BIOL212")
+                    # 1. For course range separated by "TO"
+                    if i + 2 < len(tokens) and tokens[i + 1].upper() == "TO":
+                        next_tok = tokens[i + 2]
+                        
+                        # Same dept implied: "210L TO 491"
+                        if re.match(r"^\d{1,3}[A-Z]?$", next_tok):
+                            range_token = f"{first_course}-{current_dept}{next_tok}"
+                            if range_token not in courses:
+                                courses.append(range_token)
+                            i += 3
+                            continue
+                        
+                        elif i + 3 < len(tokens) and re.match(r"^[A-Z]{2,8}$", next_tok) and re.match(r"^\d{1,3}[A-Z]?$", tokens[i + 3]):
+                            pair_dept = next_tok
+                            pair_num = tokens[i + 3]
+                            range_token = f"{first_course}-{pair_dept}{pair_num}"
+                            if range_token not in courses:
+                                courses.append(range_token)
+                            current_dept = pair_dept
+                            i += 4
+                            continue
+
+                    # 2. Alternative pair separated by "or" 
                     if i + 2 < len(tokens) and tokens[i + 1].lower() == "or":
                         next_tok = tokens[i + 2]
                         
@@ -119,7 +161,6 @@ def required_course_scan(all_lines):
                             i += 3
                             continue
                         
-                        # Explicit dept given: "210 or BIOL 212"
                         elif i + 3 < len(tokens) and re.match(r"^[A-Z]{2,8}$", next_tok) and re.match(r"^\d{1,3}[A-Z]?$", tokens[i + 3]):
                             pair_dept = next_tok
                             pair_num = tokens[i + 3]
@@ -130,7 +171,7 @@ def required_course_scan(all_lines):
                             i += 4
                             continue
 
-                    # 2. Corequisite pair separated by "&" (e.g. "CHEM 252 & 256" -> "CHEM252&CHEM256")
+                    # 3. Corequisite pair separated by "&"
                     if i + 2 < len(tokens) and tokens[i + 1] == "&":
                         next_tok = tokens[i + 2]
                         
@@ -142,7 +183,6 @@ def required_course_scan(all_lines):
                             i += 3
                             continue
                             
-                        # Explicit dept given: "252 & CHEM 256"
                         elif i + 3 < len(tokens) and re.match(r"^[A-Z]{2,8}$", next_tok) and re.match(r"^\d{1,3}[A-Z]?$", tokens[i + 3]):
                             pair_dept = next_tok
                             pair_num = tokens[i + 3]
@@ -194,11 +234,11 @@ def required_course_scan(all_lines):
     finalize_block()
     return required_courses
 
-#-------------------------
+#-----------------------------------------------------------------
 # For making the special case of unaccounted required courses
 # usually caused by multiple select from without saying the required
 # amount of courses before it
-#-------------------------
+#-----------------------------------------------------------------
 
 def normalize_uncounted_requirements(required_courses):
 
@@ -221,19 +261,13 @@ def normalize_uncounted_requirements(required_courses):
         
     return normalized
 
-#-------------------------
+#-----------------------------------------------------------------
 # Special case to removes completed courses inside required courses
 # Usually caused by having a completed course counted into another 
 # section of the degree audit
-#-------------------------
+#-----------------------------------------------------------------
 
 def is_course_completed(course_token, completed_set):
-    """
-    Checks completion status:
-    - '&' requires BOTH to be completed.
-    - '|' requires EITHER ONE to be completed.
-    - Single course requires presence in completed_set.
-    """
     if "&" in course_token:
         parts = course_token.split("&")
         return all(p in completed_set for p in parts)
@@ -244,6 +278,14 @@ def is_course_completed(course_token, completed_set):
         
     return course_token in completed_set
 
+#-----------------------------------------------------------------
+# There could be cases where a completed course is put into a
+# different section to count towards that requirement. 
+# 
+# Note: This edge case to figure out what courses is still needed
+# because of the wrongful placement of the completed course, is
+# out of the scope for this project.
+#-----------------------------------------------------------------
 
 def remove_completed(completed_courses, required_courses):
     completed_set = set(completed_courses)
@@ -267,33 +309,48 @@ def remove_completed(completed_courses, required_courses):
 
     return remaining_requirements
 
-#-------------------------
-# Opens the pdf and extract the courses to their corresponding lists 
-#-------------------------
+#-----------------------------------------------------------------
+# Opens the pdf and extract the courses to their corresponding values 
+#-----------------------------------------------------------------
 
 def scan_pdf(pdf_path):
     audit = []
     with pdfplumber.open(pdf_path) as pdf:
+        total_pages = len(pdf.pages)
+        if total_pages > MAX_ALLOWED_PAGES:
+            raise ValueError(
+                f"Document has {total_pages} pages, exceeding the {MAX_ALLOWED_PAGES}-page limit."
+            )
+
         for page in pdf.pages:
             page_text = page.extract_text()
             if page_text:
                 audit.extend(page_text.splitlines())
 
     completed_courses = complete_course_scan(audit)
-    required_courses = remove_completed(completed_courses, normalize_uncounted_requirements(required_course_scan(audit)))
+    required_courses = remove_completed(
+        completed_courses,
+        normalize_uncounted_requirements(required_course_scan(audit))
+    )
+    earned_credits = earned_credits_scan(audit)
 
-    return completed_courses, required_courses, audit
+    return completed_courses, required_courses, earned_credits, audit
 
-#-------------------------
+#-----------------------------------------------------------------
 # Testing
-#-------------------------
+#-----------------------------------------------------------------
 
-completed_courses, required_courses, audit = scan_pdf("degree_audit.pdf")
+# completed_courses, required_courses, credit, audit = scan_pdf("audit1.pdf")
 
-print("Completed Courses:")
-print(completed_courses)
+# print("Credit:")
+# print(credit)
 
-print()
+# print()
 
-print("Required Courses:")
-print(required_courses)
+# print("Completed Courses:")
+# print(completed_courses)
+
+# print()
+
+# print("Required Courses:")
+# print(required_courses)
