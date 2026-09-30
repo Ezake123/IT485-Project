@@ -29,5 +29,6 @@ This project is about creating an optimized automated schedule planning tool for
 - Render
 
 ## Cloning our repo
+git clone https://github.com/Ezake123/IT485-Project.git
 git clone git@github.com:Ezake123/IT485-Project.git
 
