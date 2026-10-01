@@ -1,0 +1,4 @@
+flask
+gunicorn
+pdfplumber
+supabase
