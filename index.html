@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ClassPick | UMass Boston course planner</title>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=Source+Serif+4:wght@600;700&display=swap" rel="stylesheet">
+<style>
+:root{--hd:#0a2a55;--h:#0a2a55;--btn:#0a2a55;--beacon:#4a76c9;--sun:#ffc72c;--bg:#f4f7fb;--card:#fff;--ink:#16223b;--mute:#586783;--line:#d8e0ee;--tint:#e7eefb;--ok:#17714f;--bad:#b3261e;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--h:#dbe6fb;--btn:#4a76c9;--bg:#0b1424;--card:#111e36;--ink:#e6ecf8;--mute:#9dabc6;--line:#25365a;--tint:#172745;--ok:#4cc38f;--bad:#ff8a80}}
+:root[data-theme="dark"]{--h:#dbe6fb;--btn:#4a76c9;--bg:#0b1424;--card:#111e36;--ink:#e6ecf8;--mute:#9dabc6;--line:#25365a;--tint:#172745;--ok:#4cc38f;--bad:#ff8a80}
+html{scroll-padding-top:env(safe-area-inset-top,0px);background:var(--hd)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Public Sans",system-ui,sans-serif;min-height:100%}
+h1,h2,h3{font-family:"Source Serif 4",Georgia,serif;color:var(--h);line-height:1.15;margin:0 0 .5em}
+h2{font-size:2rem}h3{font-size:1.25rem;margin-top:1.6em}small{color:var(--mute);font-weight:400}
+.w{max-width:1040px;margin:0 auto;padding:0 20px}
+.util{background:#06193a;color:#cfdcf5;font-size:13px;padding:6px 0}.util .w{display:flex;justify-content:space-between;gap:12px}
+.top{background:var(--hd);color:#fff;position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
+.tr{display:flex;align-items:center;gap:24px;flex-wrap:wrap;padding-top:10px;padding-bottom:0}
+.brand{display:flex;gap:10px;align-items:center;color:#fff;text-decoration:none}.brand b{font:700 1.4rem "Source Serif 4",Georgia,serif;display:block;line-height:1}.brand small{color:#b9c9ea;font-size:12px}
+.nav{display:flex;gap:2px;overflow-x:auto;max-width:100%}
+.nav button{background:none;border:0;color:#c9d6f0;font:500 14px "Public Sans",sans-serif;padding:14px 12px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap}
+.nav button.on{color:#fff;border-color:var(--sun)}
+button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,textarea:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
+.hero{background:var(--hd);color:#fff;padding:56px 0 64px}
+.hg{display:grid;grid-template-columns:1.3fr 1fr;gap:48px;align-items:center}
+.hero h1{color:#fff;font-size:clamp(2.1rem,5vw,3.3rem)}.hero p{color:#d6e1f7;font-size:1.1rem;max-width:34em}
+.flow{margin:0;padding:0 0 0 22px;list-style:none;border-left:3px solid var(--sun)}
+.flow li{position:relative;padding:0 0 22px 18px}.flow li:last-child{padding-bottom:0}
+.flow li:before{content:"";position:absolute;left:-30px;top:5px;width:13px;height:13px;border-radius:50%;background:var(--sun);border:3px solid var(--hd)}
+.flow b{display:block;font-size:1.05rem}.flow span{color:#b9c9ea;font-size:14px}
+.row{display:flex;gap:12px;flex-wrap:wrap;margin:18px 0;align-items:center}
+.btn{background:var(--btn);color:#fff;border:2px solid var(--btn);border-radius:8px;font:600 15px "Public Sans",sans-serif;padding:10px 18px;cursor:pointer}
+.btn.alt{background:transparent;color:var(--h);border-color:var(--btn)}
+.btn.sun{background:var(--sun);border-color:var(--sun);color:#1a2540}
+.btn.ghost{background:transparent;border-color:#8fa6d4;color:#fff}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.facts{display:grid;grid-template-columns:repeat(3,1fr);gap:28px;padding:40px 20px}
+.facts div{border-top:3px solid var(--beacon);padding-top:10px}.facts b{color:var(--h)}.facts p{margin:.3em 0;color:var(--mute);font-size:15px}
+.pg .w{padding-top:36px;padding-bottom:60px}.lead{color:var(--mute);max-width:40em}
+.drop{display:block;width:100%;border:2px dashed var(--beacon);background:var(--tint);border-radius:12px;padding:38px 20px;text-align:center;color:var(--h);cursor:pointer;font:inherit}
+.drop b{display:block;font-size:1.1rem}.drop:hover,.drop.over{background:var(--card)}
+details{margin:16px 0}summary{cursor:pointer;color:var(--h);font-weight:600}
+textarea,input{width:100%;font:inherit;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);margin:8px 0}
+input{max-width:220px;margin:0}select{font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);max-width:100%}
+.chips{display:flex;flex-wrap:wrap;gap:8px}.chip{background:var(--tint);color:var(--h);border:1px solid var(--line);border-radius:99px;padding:5px 12px;font:600 13px "Public Sans",sans-serif;cursor:pointer}
+.err{color:var(--bad);font-weight:600}.ok{color:var(--ok);font-weight:600}
+.req,.course{display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--beacon);border-radius:8px;padding:12px 16px;margin:8px 0}
+.req small,.course small{display:block}.code{background:var(--tint);color:var(--h);border-radius:6px;padding:2px 8px;font-weight:600;font-size:13px;white-space:nowrap;display:inline-block;margin:2px 0}
+.course.lock{border-left-color:var(--line);opacity:.75}.course.lock:has(.secs[open]){opacity:1}
+.secs{flex-basis:100%;margin:0}.secs summary{font-size:14px;font-weight:600}.secs table{margin-top:8px;font-size:14px}.secs td,.secs th{padding:6px 8px}.secs .tw{overflow-x:auto}.full{color:var(--bad);font-weight:600}.open{color:var(--ok);font-weight:600}.need{color:var(--mute);font-size:14px}
+.dock{position:sticky;bottom:env(safe-area-inset-bottom,0px);display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--hd);color:#fff;border-radius:10px;padding:12px 16px;margin-top:28px}
+.dock .btn{background:var(--sun);border-color:var(--sun);color:#1a2540}
+.empty{background:var(--card);border:1px dashed var(--line);border-radius:10px;padding:28px;text-align:center}
+.banner{background:var(--tint);border-left:5px solid var(--ok);padding:12px 16px;border-radius:6px;margin:16px 0}
+.calw{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.cal{min-width:580px}.ch,.cb{display:flex}.ch div{flex:1;text-align:center;font-weight:600;color:var(--h);padding:8px;border-left:1px solid var(--line)}.ch div:first-child{flex:none;width:52px;border:0}
+.cb{padding:10px 0}.tg{width:52px;flex:none;position:relative;height:572px}.tg span{position:absolute;right:6px;font-size:11px;color:var(--mute);transform:translateY(-50%)}
+.dc{flex:1;position:relative;height:572px;border-left:1px solid var(--line);background:repeating-linear-gradient(to bottom,transparent 0 43px,var(--line) 43px 44px)}
+.blk{position:absolute;left:2px;right:2px;border-radius:6px;padding:4px 6px;font-size:12px;line-height:1.25;overflow:hidden;color:#fff}.blk span{display:block;opacity:.9}
+.b0{background:#0a2a55}.b1{background:#4a76c9}.b2{background:#1f7f86}.b3{background:#ffc72c;color:#1a2540}.b4{background:#5b6b85}
+table{width:100%;border-collapse:collapse;margin-top:18px;font-size:15px}td,th{text-align:left;padding:8px;border-bottom:1px solid var(--line)}th{color:var(--h)}
+footer{background:var(--hd);color:#b9c9ea;font-size:13px;padding:24px 0}footer p{margin:.3em 0}
+@media(max-width:760px){.hg,.facts{grid-template-columns:1fr}.hero{padding:36px 0}h2{font-size:1.6rem}}
+@media print{.util,.top,.btn,footer,.dock{display:none!important}}
+</style></head>
+<body>
+<div class="util"><div class="w"><span>University of Massachusetts Boston</span><span>IT Capstone project</span></div></div>
+<header class="top"><div class="w tr">
+<a class="brand" href="#" data-go="0"><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="7" fill="#ffc72c"/><path d="M16 2v5M16 25v5M2 16h5M25 16h5M6 6l3.5 3.5M22.5 22.5L26 26M26 6l-3.5 3.5M9.5 22.5L6 26" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg><span><b>ClassPick</b><small>A UMass Boston student project</small></span></a>
+<nav class="nav" aria-label="Planning steps"><button class="on" data-go="0">Home</button><button data-go="1">Degree audit</button><button data-go="2">Requirements</button><button data-go="3">Courses</button><button data-go="4">Schedule builder</button><button data-go="5">Final schedule</button></nav>
+</div></header>
+<main>
+<section class="pg" id="p0">
+<div class="hero"><div class="w hg"><div>
+<h1>Build next semester's schedule from your degree audit.</h1>
+<p>ClassPick reads your audit, finds what you still need, suggests courses you're eligible for, and lays them out with no time conflicts.</p>
+<div class="row"><button class="btn sun" data-go="1">Upload your degree audit</button><button class="btn ghost smp">Try a sample audit</button></div></div>
+<ol class="flow"><li><b>Upload degree audit</b><span>PDF or text from your student portal</span></li><li><b>Identify remaining requirements</b><span>What you have left, by category</span></li><li><b>Recommend eligible courses</b><span>Prerequisites checked for you</span></li><li><b>Generate a conflict-free schedule</b><span>A weekly plan to bring to your advisor</span></li></ol></div></div>
+<div class="w facts"><div><b>Private by design</b><p>Your audit is read once on the ClassPick server to find your courses, then discarded. Nothing is saved or shared.</p></div><div><b>Advisor-friendly</b><p>ClassPick drafts a plan. Your academic advisor gives the final guidance.</p></div><div><b>Real course data</b><p>Courses, sections, and seat counts come from the UMass Boston course listings. Seat counts can change quickly, so check before you register.</p></div></div>
+</section>
+<section class="pg" id="p1" hidden><div class="w">
+<h2>Upload your degree audit</h2>
+<p class="lead">Export your audit as a PDF from your student portal and add it here. It's sent securely to ClassPick, read once, and never stored.</p>
+<button class="drop" id="drop"><b>Choose a PDF or text file</b><span>or drag it onto this box</span></button>
+<input type="file" id="file" accept=".pdf,.txt" hidden>
+<details><summary>Paste audit text instead</summary><textarea id="paste" rows="6" aria-label="Degree audit text"></textarea><button class="btn alt" id="pasteb">Analyze text</button></details>
+<div class="row"><button class="btn alt smp">Use the sample audit</button></div>
+<div id="st" aria-live="polite"></div>
+</div></section>
+<section class="pg" id="p2" hidden><div class="w" id="r2"></div></section>
+<section class="pg" id="p3" hidden><div class="w" id="r3"></div></section>
+<section class="pg" id="p4" hidden><div class="w" id="r4"></div></section>
+<section class="pg" id="p5" hidden><div class="w" id="r5"></div></section>
+</main>
+<footer><div class="w"><p><b>ClassPick</b> is a UMass Boston IT capstone project by Jerry, Hasan, Will, and Hunter.</p><p>It is a student prototype, not an official university system. Schedules are drafts: confirm every choice with your academic advisor before registering.</p></div></footer>
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+// Sample catalog: code -> [name, credits, prerequisites, sections]
+// Only used by the "Try a sample audit" demo. Real audits use RC (filled from Supabase).
+const C={
+'ENGL 101':['First-Year Writing',3,[],['TR 9:30-10:45','MW 14:00-15:15']],
+'MATH 140':['Calculus I',4,[],['MWF 9:00-9:50','TR 11:00-12:40']],
+'CS 110':['Introduction to Computing',3,[],['MW 10:00-11:15','TR 13:00-14:15']],
+'CS 210':['Data Structures',3,['CS 110'],['MW 11:30-12:45','TR 9:30-10:45']],
+'CS 240':['Database Systems',3,['CS 210'],['TR 11:00-12:15','MW 15:30-16:45']],
+'IT 220':['Networking Fundamentals',3,['CS 110'],['MW 13:00-14:15','F 9:00-11:30']],
+'IT 310':['Web Systems',3,['CS 210'],['TR 14:30-15:45','MW 17:30-18:45']],
+'IT 350':['Information Security',3,['IT 220'],['MW 9:30-10:45','TR 17:30-18:45']],
+'IT 490':['IT Capstone',3,['IT 310','IT 350'],['F 12:00-14:30']],
+'IT 330':['Cloud Computing',3,['IT 220'],['TR 12:30-13:45']],
+'CS 320':['Software Engineering',3,['CS 210'],['MW 14:30-15:45']],
+'CS 360':['Human-Computer Interaction',3,['CS 110'],['TR 15:00-16:15','W 18:00-20:30']],
+'ART 101':['Art Appreciation',3,[],['MW 12:00-13:15']],
+'MUS 110':['Music in Society',3,[],['TR 12:30-13:45']],
+'PSYC 101':['Introduction to Psychology',3,[],['MWF 10:00-10:50','TR 15:30-16:45']],
+'SOC 101':['Introduction to Sociology',3,[],['TR 8:00-9:15']],
+'BIO 111':['Introductory Biology',4,[],['TR 8:00-9:40']]};
+const R=[{n:'First-Year Writing',g:'General education',need:1,o:['ENGL 101']},{n:'Calculus',g:'General education',need:1,o:['MATH 140']},
+...['CS 110','CS 210','CS 240','IT 220','IT 310','IT 350','IT 490'].map(c=>({n:C[c][0],g:'Major core',need:1,o:[c]})),
+{n:'Major electives',g:'Major electives',need:2,o:['IT 330','CS 320','CS 360']},
+{n:'Arts and humanities',g:'General education',need:1,o:['ART 101','MUS 110']},
+{n:'Social science',g:'General education',need:1,o:['PSYC 101','SOC 101']},
+{n:'Natural science',g:'General education',need:1,o:['BIO 111']}];
+// Put the sample catalog in the same shape as the real one:
+// [name, credits, prereq groups, sections, prereq text, description]
+// prereq groups: every group is required, any ONE course in a group is enough
+// sections: {t:'MW 10:00-11:15' or 'TBA', sec, full, seats, loc, inst}
+for(const k in C){C[k][2]=C[k][2].map(p=>[p]);C[k][3]=C[k][3].map(t=>({t,sec:'',full:false,seats:'',loc:'',inst:''}));C[k][4]='';C[k][5]=''}
+const RC={};
+const SAMPLE=`DEGREE AUDIT - B.S. Information Technology
+Student: Sample Student   Catalog year: 2024-25
+COMPLETED COURSES
+ENGL 101 First-Year Writing A- Fall 2024
+MATH 140 Calculus I B+ Fall 2024
+CS 110 Introduction to Computing A Fall 2024
+PSYC 101 Introduction to Psychology B Spring 2025
+CS 210 Data Structures B+ Spring 2025
+IN PROGRESS
+IT 220 Networking Fundamentals IP Fall 2026
+ART 101 Art Appreciation IP Fall 2026
+STILL NEEDED
+CS 240 Database Systems
+IT 310 Web Systems
+IT 350 Information Security
+IT 490 IT Capstone
+Major electives (2 courses)
+Natural science (1 course)`;
+// mode: 'sample' = built-in demo data, 'real' = results from the backend
+// reqAll: requirements from the backend, each like [count, "CS310", "CS320|CS321", "CHEM252&CHEM256"]
+// fetched: course codes already looked up in Supabase (found or not)
+const S={done:new Set(),seen:false,sel:[],pick:{},sched:null,mode:'sample',reqAll:[],fetched:new Set(),term:'',open:new Set()};
+const K=()=>S.mode=='real'?RC:C;
+const D={M:0,T:1,W:2,R:3,F:4};
+const pt=s=>{const m=String(s).match(/^([MTWRF]+) (\d+):(\d+)-(\d+):(\d+)$/);if(!m)return{d:[],a:0,b:0,tba:true};return{d:[...m[1]].map(c=>D[c]),a:+m[2]*60+ +m[3],b:+m[4]*60+ +m[5]}};
+const clash=(x,y)=>x.d.some(d=>y.d.includes(d))&&x.a<y.b&&y.a<x.b;
+const fmt=m=>{const h=Math.floor(m/60);return(h%12||12)+':'+String(m%60).padStart(2,'0')+(h<12?'am':'pm')};
+const rng=s=>{const t=pt(s);return t.tba?'TBA':fmt(t.a)+'-'+fmt(t.b)};
+const dn=s=>pt(s).tba?'':s.split(' ')[0].replace(/R/g,'Th');
+const meets=o=>pt(o.t).tba?'TBA / online':dn(o.t)+' '+rng(o.t);
+const credits=()=>S.sel.reduce((n,c)=>n+((K()[c]||[])[1]||0),0);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Course title: the sample catalog has names; the database only has descriptions, so show a short one
+const title=c=>{const x=K()[c];if(!x)return'';if(x[0])return x[0];const d=x[5]||'';return d.length>80?d.slice(0,80)+'...':d};
+// Prereq groups the student hasn't satisfied yet
+const miss=c=>K()[c][2].filter(g=>!g.some(p=>S.done.has(p))).map(g=>g.join(' or '));
+// How many other courses list this one as a prereq
+const unlocks=c=>Object.keys(K()).filter(k=>!S.done.has(k)&&K()[k][2].some(g=>g.includes(c))).length;
+// "CS110" -> "CS 110" (backend format -> page format)
+const sp=c=>String(c).trim().toUpperCase().replace(/^([A-Z]+)\s*-?\s*(\d)/,'$1 $2');
+// "CS320|CS321" -> "CS 320 or CS 321", "CHEM252&CHEM256" -> "CHEM 252 + CHEM 256"
+const lab=t=>t.split('|').map(a=>a.split('&').map(sp).join(' + ')).join(' or ');
+// '|' = either one done, '&' = all done
+const isDone=t=>t.split('|').some(a=>a.split('&').every(p=>S.done.has(sp(p))));
+const rem=()=>S.mode=='real'
+ ?S.reqAll.map((r,i)=>{const o=r.slice(1).filter(t=>!isDone(t));return{n:'Requirement '+(i+1),g:'From your degree audit',need:r[0],o,left:Math.min(r[0],o.length)}}).filter(r=>r.left>0)
+ :R.map(r=>({...r,left:r.need-r.o.filter(o=>S.done.has(o)).length})).filter(r=>r.left>0);
+const total=()=>S.mode=='real'?S.reqAll.length:R.length;
+// Individual course codes in a requirement that the student hasn't done
+const codesOf=r=>[...new Set(S.mode=='real'?r.o.flatMap(t=>t.split(/[|&]/).map(sp)):r.o)].filter(c=>!S.done.has(c));
+const em=(t,b,n)=>`<div class="empty"><p>${t}</p><button class="btn" data-go="${n}">${b}</button></div>`;
+
+function go(n){S.sel=S.sel.filter(c=>!S.done.has(c));$$('.pg').forEach((p,i)=>p.hidden=i!=n);$$('.nav button').forEach((b,i)=>b.classList.toggle('on',i==n));[0,rUp,rReq,rRec,rBuild,rFinal][n]();scrollTo(0,0)}
+
+// Sample demo only: reads the built-in SAMPLE text against the sample catalog
+function analyze(t){S.mode='sample';S.reqAll=[];S.done=new Set();let mode='d';
+t.split(/\n/).forEach(l=>{const has=/\b[A-Z]{2,5}\s*-?\s*\d{3}\b/.test(l);
+if(!has){if(/still needed|not met|remaining|not complete/i.test(l))mode='n';else if(/completed|satisfied|course history|in[- ]progress|\bmet\b/i.test(l))mode='d'}
+else if(mode=='d'&&!/needed|not met|not complete|\b(F|W|NC)\b/.test(l))for(const m of l.matchAll(/\b([A-Z]{2,5})\s*-?\s*(\d{3})\b/g)){const k=m[1]+' '+m[2];if(C[k])S.done.add(k)}});
+S.seen=true;S.sel=[];S.pick={};S.sched=null;rUp()}
+
+// Real audits: results come back from the backend (pdf_scanner.py)
+function load(d){S.mode='real';S.done=new Set((d.completed||[]).map(sp));S.reqAll=d.requirements||[];
+S.seen=true;S.sel=[];S.pick={};S.sched=null;rUp()}
+
+async function post(url,opts){const st=$('#st');
+try{const res=await fetch(url,{method:'POST',...opts});let d={};try{d=await res.json()}catch(_){}
+if(!res.ok)throw new Error(d.error||'The server could not analyze this audit.');load(d)}
+catch(e){st.innerHTML=`<p class="err">${esc(e.message=='Failed to fetch'?'Could not reach the ClassPick server. Wait a minute and try again.':e.message)}</p>`}}
+
+async function readFile(f){if(!f)return;$('#st').textContent='Analyzing '+f.name+'...';
+if(/\.pdf$/i.test(f.name)){const form=new FormData();form.append('audit',f);return post('/api/audit',{body:form})}
+return sendText(await f.text())}
+
+function sendText(t){if(!t.trim())return $('#st').innerHTML='<p class="err">Paste your audit text first.</p>';
+$('#st').textContent='Analyzing...';
+return post('/api/audit-text',{headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})})}
+
+// Section from the backend -> 'MW 16:00-17:15', or 'TBA' when there are no weekday meeting times
+function secStr(s){const d=(s.days||'').replace(/[^MTWRF]/g,'');return d&&s.start&&s.end?`${d} ${s.start}-${s.end}`:'TBA'}
+
+// Looks up course details and sections in Supabase through the backend (/api/courses)
+async function fetchCatalog(codes){
+codes.forEach(c=>S.fetched.add(c));
+try{const res=await fetch('/api/courses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({codes})});
+let d={};try{d=await res.json()}catch(_){}
+if(!res.ok)throw new Error(d.error||'Could not load course details.');
+S.term=d.term||'';
+for(const[code,x]of Object.entries(d.courses||{}))RC[code]=['',x.credits||0,x.prereqs||[],(x.sections||[]).map(s=>({t:secStr(s),sec:s.section||'',full:s.capacity!=null&&(s.enrolled||0)>=s.capacity,seats:s.capacity!=null?`${s.enrolled||0}/${s.capacity}`:'',loc:s.location||'',inst:(s.instructors||[]).join(', ')})),x.prereq_text||'',x.description||'']}
+catch(e){codes.forEach(c=>S.fetched.delete(c));throw new Error(e.message=='Failed to fetch'?'Could not reach the ClassPick server. Wait a minute and try again.':e.message)}}
+
+function rUp(){const a=[...S.done],st=$('#st');if(!S.seen)return st.innerHTML='';
+const head=a.length?`<h3>${a.length} completed or in-progress courses found</h3><p class="lead">Remove any that are wrong or add ones we missed. In-progress courses count as done for planning.</p>`
+:`<p class="err">${S.mode=='real'?'No completed or in-progress courses were found in this audit. Add them below, or check that this is a degree audit.':'No courses matched the sample catalog. Try the sample audit to see the full workflow.'}</p>`;
+st.innerHTML=head+`<div class="chips">${a.map(c=>`<button class="chip" data-rm="${esc(c)}" title="Remove ${esc(c)}">${esc(c)} &times;</button>`).join('')}</div><div class="row"><input id="addc" placeholder="e.g. CS 240" aria-label="Add a course code"><button class="btn alt" id="addb">Add course</button></div><div class="row"><button class="btn" data-go="2">See remaining requirements</button></div>`}
+
+function rReq(){const el=$('#r2');if(!S.seen)return el.innerHTML=em('Upload a degree audit first to see what you still need.','Upload degree audit',1);
+const m=rem();
+el.innerHTML=`<h2>Remaining requirements</h2><p class="lead">${m.length} of ${total()} requirements are still open after ${S.done.size} completed courses.</p>`+(m.length?m.map(r=>`<div class="req"><div><b>${esc(r.n)}</b><small>${esc(r.g)}</small></div><div>${r.left>1?'Choose '+r.left+' of ':r.o.length>1?'Choose 1 of ':''}${r.o.map(o=>`<span class="code">${esc(lab(o))}</span>`).join(' ')}</div></div>`).join('')+'<div class="row"><button class="btn" data-go="3">Find eligible courses</button></div>':`<p class="ok">${S.mode=='real'?'No open course requirements were found in your audit.':'Every requirement in the sample catalog is covered.'}</p>`)}
+
+// Expandable list of a course's sections, open seats first
+function secList(c){const x=K()[c],L=x[3].map((o,i)=>({o,i})).sort((a,b)=>a.o.full-b.o.full);if(!L.length)return'';
+const nOpen=L.filter(r=>!r.o.full).length;
+return `<details class="secs" data-sx="${esc(c)}" ${S.open.has(c)?'open':''}><summary>Show ${L.length} section${L.length>1?'s':''}${nOpen<L.length?` (${nOpen} open)`:''}</summary><div class="tw"><table><tr><th>Section</th><th>Meets</th><th>Seats</th><th>Location</th><th>Instructor</th></tr>${L.map(({o})=>`<tr><td>${esc(o.sec||'-')}</td><td>${esc(meets(o))}</td><td>${o.seats?`<span class="${o.full?'full':'open'}">${o.full?'Full':'Open'}</span> ${esc(o.seats)}`:'-'}</td><td>${esc(o.loc||'-')}</td><td>${esc(o.inst||'TBA')}</td></tr>`).join('')}</table></div></details>`}
+
+function rRec(){const el=$('#r3');if(!S.seen)return el.innerHTML=em('Upload a degree audit first to get course recommendations.','Upload degree audit',1);
+const reqs=rem();
+if(S.mode=='real'){const need=[...new Set(reqs.flatMap(codesOf))].filter(c=>!S.fetched.has(c));
+if(need.length){el.innerHTML='<h2>Eligible courses</h2><p class="lead">Loading course details and sections...</p>';
+fetchCatalog(need).then(()=>{if(!$('#p3').hidden)rRec()}).catch(e=>{el.innerHTML=`<h2>Eligible courses</h2><p class="err">${esc(e.message)}</p><div class="row"><button class="btn" data-go="3">Try again</button></div>`});return}}
+const X=K();
+let h='<h2>Eligible courses</h2><p class="lead">Courses that count toward an open requirement. Locked courses need their prerequisites first.</p>';
+if(S.mode=='real'&&S.term)h+=`<p class="lead">Sections shown are for ${esc(S.term)}.</p>`;
+reqs.forEach(r=>{const codes=codesOf(r);
+const known=codes.filter(c=>X[c]).map(c=>({c,m:miss(c),n:unlocks(c)})).sort((a,b)=>a.m.length-b.m.length||(X[b.c][3].length?1:0)-(X[a.c][3].length?1:0)||b.n-a.n);
+const unknown=codes.filter(c=>!X[c]);
+h+=`<h3>${esc(r.n)}${r.left>1?` <small>choose ${r.left}</small>`:''}</h3>`+known.map(({c,m,n})=>{const on=S.sel.includes(c),x=X[c],ns=x[3].length,open=x[3].filter(o=>!o.full).length;
+const info=`${x[1]||'?'} credits, ${ns?`${ns} section${ns>1?'s':''}${open<ns?` (${open} with open seats)`:''}`:'not offered this term'}${n?`, unlocks ${n} more course${n>1?'s':''}`:''}`;
+const right=m.length?`<span class="need">Needs ${esc(m.join(', '))}</span>`:!ns?'<span class="need">No sections</span>':`<button class="btn${on?'':' alt'}" data-t="${esc(c)}" aria-pressed="${on}">${on?'Added':'Add'}</button>`;
+return `<div class="course${m.length||!ns?' lock':''}"><div><b>${esc(c)}</b> ${esc(title(c))}<small>${info}</small>${x[4]?`<small>Prerequisites: ${esc(x[4])}</small>`:''}</div>${right}${secList(c)}</div>`}).join('')
++unknown.map(c=>`<div class="course lock"><div><b>${esc(c)}</b><small>${S.mode=='real'?'Not found in the course catalog':'Not in the sample catalog'}</small></div></div>`).join('')});
+el.innerHTML=h+`<div class="dock"><span>${S.sel.length} selected, ${credits()} credits</span><button class="btn" data-go="4" ${S.sel.length?'':'disabled'}>Build schedule</button></div>`}
+
+function rBuild(){const el=$('#r4');if(!S.sel.length)return el.innerHTML=em('Add at least one eligible course to build a schedule.','Choose courses',3);
+const X=K();
+el.innerHTML=`<h2>Schedule builder</h2><p class="lead">Leave sections on auto and ClassPick finds a combination with no overlaps, preferring sections with open seats. Or pin a section yourself.</p>`+S.sel.map(c=>`<div class="course"><div><b>${esc(c)}</b> ${esc(title(c))}<small>${X[c][1]||'?'} credits</small></div><div class="row" style="margin:0"><select data-pk="${esc(c)}" aria-label="Section for ${esc(c)}"><option value="">Auto-pick</option>${X[c][3].map((o,i)=>`<option value="${i}" ${S.pick[c]===i?'selected':''}>${o.sec?'Sec '+esc(o.sec)+': ':''}${esc(meets(o))}${o.full?' (full)':''}</option>`).join('')}</select><button class="btn alt" data-rs="${esc(c)}">Remove</button></div></div>`).join('')+`<p class="err" id="ge" role="alert"></p><div class="dock"><span>${credits()} credits${credits()>18?' (over the usual 18-credit limit)':''}</span><button class="btn" id="gen">Generate schedule</button></div>`}
+
+function gen(){const X=K(),tt=(c,s)=>pt(X[c][3][s].t);
+const cs=S.sel.map(c=>{const all=X[c][3].map((_,i)=>i),open=all.filter(i=>!X[c][3][i].full);return{c,o:S.pick[c]!=null?[S.pick[c]]:(open.length?open:all)}});
+const bt=(i,ch)=>{if(i==cs.length)return ch;for(const s of cs[i].o){const t=tt(cs[i].c,s);if(ch.every(x=>!clash(x.t,t))){const r=bt(i+1,[...ch,{c:cs[i].c,s,t}]);if(r)return r}}return null};
+const r=bt(0,[]);if(r){S.sched=r;return go(5)}
+let m='No combination of sections avoids every overlap. Remove a course or unpin a section.';
+for(let i=0;i<cs.length;i++)for(let j=i+1;j<cs.length;j++)if(!cs[i].o.some(a=>cs[j].o.some(b=>!clash(tt(cs[i].c,a),tt(cs[j].c,b)))))m=`${cs[i].c} and ${cs[j].c} overlap in every available section. Remove one or unpin a section.`;
+$('#ge').textContent=m}
+
+function rFinal(){const el=$('#r5');if(!S.sched)return el.innerHTML=em('Generate a schedule first to see your final plan.','Open schedule builder',4);
+const X=K(),s=S.sched,ok=s.every((x,i)=>s.every((y,j)=>i>=j||!clash(x.t,y.t))),tba=s.filter(x=>x.t.tba);
+let hrs='';for(let h=8;h<=21;h++)hrs+=`<span style="top:${(h-8)*44}px">${h%12||12}${h<12?'a':'p'}</span>`;
+const cols=[0,1,2,3,4].map(d=>`<div class="dc">${s.map((x,i)=>x.t.d.includes(d)?`<div class="blk b${i%5}" style="top:${Math.max(0,(x.t.a-480)/60*44)}px;height:${(x.t.b-x.t.a)/60*44-2}px"><b>${esc(x.c)}</b><span>${fmt(x.t.a)}-${fmt(x.t.b)}</span></div>`:'').join('')}</div>`).join('');
+el.innerHTML=`<h2>Final schedule</h2><div class="banner" style="border-color:var(${ok?'--ok':'--bad'})"><b>${ok?'No time conflicts.':'Time conflicts found.'}</b> ${s.length} courses, ${s.reduce((n,x)=>n+(X[x.c][1]||0),0)} credits.${tba.length?` ${tba.map(x=>esc(x.c)).join(', ')} ${tba.length>1?'have':'has'} no set meeting time (TBA or online).`:''} Review this draft with your academic advisor before you register.</div>
+<div class="calw"><div class="cal"><div class="ch"><div></div>${['Mon','Tue','Wed','Thu','Fri'].map(d=>`<div>${d}</div>`).join('')}</div><div class="cb"><div class="tg">${hrs}</div>${cols}</div></div></div>
+<table><tr><th>Course</th><th>Section</th><th>Meets</th><th>Location</th><th>Credits</th></tr>${s.map(x=>{const o=X[x.c][3][x.s];return `<tr><td><b>${esc(x.c)}</b><br><small>${esc(title(x.c))}</small></td><td>${esc(o.sec||'-')}${o.seats?`<br><small>${esc(o.seats)} enrolled</small>`:''}</td><td>${esc(meets(o))}</td><td>${esc(o.loc||'-')}</td><td>${X[x.c][1]||'?'}</td></tr>`}).join('')}</table>
+<div class="row"><button class="btn" id="prt">Print or save as PDF</button><button class="btn alt" data-go="4">Adjust schedule</button></div>`}
+
+document.addEventListener('click',e=>{const b=e.target.closest('[data-go],[data-t],[data-rm],[data-rs],.smp,#addb,#gen,#drop,#pasteb,#prt');if(!b)return;const d=b.dataset;
+if(d.go!=null){e.preventDefault();go(+d.go)}
+else if(d.t){const i=S.sel.indexOf(d.t);i<0?S.sel.push(d.t):S.sel.splice(i,1);S.sched=null;rRec()}
+else if(d.rm){S.done.delete(d.rm);S.sched=null;rUp()}
+else if(d.rs){S.sel=S.sel.filter(c=>c!=d.rs);delete S.pick[d.rs];S.sched=null;rBuild()}
+else if(b.classList.contains('smp')){analyze(SAMPLE);go(1)}
+else if(b.id=='addb'){const i=$('#addc'),v=sp(i.value);if(S.mode=='real'?/^[A-Z]{2,8} \d{1,3}[A-Z]?$/.test(v):C[v]){S.done.add(v);S.sched=null;rUp()}else{i.value='';i.placeholder=S.mode=='real'?'Use a code like CS 240':'Not in sample catalog'}}
+else if(b.id=='gen')gen();
+else if(b.id=='drop')$('#file').click();
+else if(b.id=='pasteb'){sendText($('#paste').value)}
+else if(b.id=='prt')window.print()});
+document.addEventListener('change',e=>{if(e.target.id=='file'){readFile(e.target.files[0]);e.target.value=''}const c=e.target.dataset.pk;if(c){e.target.value===''?delete S.pick[c]:S.pick[c]=+e.target.value;S.sched=null}});
+document.addEventListener('toggle',e=>{const c=e.target.dataset&&e.target.dataset.sx;if(c)e.target.open?S.open.add(c):S.open.delete(c)},true);
+const dz=$('#drop');dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('over')});dz.addEventListener('dragleave',()=>dz.classList.remove('over'));dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('over');readFile(e.dataTransfer.files[0])});
+</script>
+</body></html>
