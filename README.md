@@ -14,9 +14,9 @@ This project is about creating an optimized automated schedule planning tool for
 - Schedule Visualization: A visual demonstration of the schedule being built and display on the website.
 
 ## Tech Stack
-- Back-end: Python, Flask, Playwright, BeautifulSoup, pdfplumber
+- Back-end: Python (Flask, Playwright, BeautifulSoup, pdfplumber)
 - Front-end: HTML, CSS, JavaScript
-- Database: Supabase - PostgreSQL
+- Database: Supabase (PostgreSQL)
 
 ## Prerequisites
 - Python 3.10+
