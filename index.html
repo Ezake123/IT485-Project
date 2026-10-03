@@ -319,12 +319,16 @@ if(!d.sections.length){rBuild();S.lastFail={...d,mode,courses:[]};$('#ge').inner
 S.sched={...d,mode};go(5)}
 catch(e){S.busy=false;rBuild();$('#ge').innerHTML=errBox(friendly(e),"Couldn't build a schedule.")}}
 
-// "Only 1 of 5 courses fit" + the reasons the others didn't, condensed
-function whyNot(d){const g=(d.why_not||[]).filter(x=>x.key!='offered');if(!g.length||d.mode!='auto'||d.courses.length>=d.max_courses)return'';
-const fix=[];if(g.some(x=>x.key=='full'||x.key=='conflict'||x.key=='coreq')&&S.prefs.open_only)fix.push('<button class="btn alt sm" data-fix="full">Include full sections</button>');
-if(g.some(x=>x.key=='prefs'||x.key=='conflict'||x.key=='coreq'))fix.push('<button class="btn alt sm" data-fix="times">Allow all days and times</button>');
-const list=x=>{const c=x.courses.map(y=>y.course+(y.detail?` <span>(${esc(x.key=='coreq'?'with ':'needs ')}${esc(y.detail)})</span>`:'')),n=c.length;return c.slice(0,x.key=='prereq'?5:8).join(', ')+(n>(x.key=='prereq'?5:8)?` <span>and ${n-(x.key=='prereq'?5:8)} more</span>`:'')};
-return `<div class="why"><b>Only ${d.courses.length} of ${d.max_courses} courses fit. Here's why the rest didn't:</b><ul>${g.map(x=>`<li><b>${esc(x.label)}:</b> ${list(x)}</li>`).join('')}</ul>${fix.length?`<div class="row" style="margin:10px 0 0">${fix.join('')}</div>`:''}</div>`}
+// "Only 2 of 5 courses fit" + which requirements weren't covered, one line each
+function whyNot(d){const g=d.why_not||[];if(!g.length||d.mode!='auto'||d.courses.length>=d.max_courses)return'';
+const msg=x=>x.status=='limit'?`Not added: you reached your limit of ${d.max_courses} courses or ${S.prefs.max_credits} credits.`
+:x.status=='partial'?`${x.filled} of ${x.need} scheduled. No other classes are available to satisfy the rest right now.`
+:'No classes are available to satisfy this requirement right now.';
+const help=new Set(g.flatMap(x=>x.status=='limit'?[]:x.could_help||[])),fix=[];
+if(S.prefs.open_only&&(help.has('full')||help.has('conflict')||help.has('coreq')))fix.push('<button class="btn alt sm" data-fix="full">Include full sections</button>');
+if(help.has('prefs')||help.has('conflict')||help.has('coreq'))fix.push('<button class="btn alt sm" data-fix="times">Allow all days and times</button>');
+const order={none:0,partial:1,limit:2};
+return `<div class="why"><b>Only ${d.courses.length} of ${d.max_courses} courses fit. These requirements aren't covered:</b><ul>${g.slice().sort((a,b)=>order[a.status]-order[b.status]).map(x=>`<li><b>${esc(x.requirement)}:</b> <span>${msg(x)}</span></li>`).join('')}</ul>${fix.length?`<p class="note" style="margin:10px 0 6px">Changing your preferences might open up more classes:</p><div class="row" style="margin:0">${fix.join('')}</div>`:''}</div>`}
 
 //-------------------------
 // Step 5: final schedule
