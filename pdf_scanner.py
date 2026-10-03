@@ -1,10 +1,17 @@
 import pdfplumber
 import re
+from models import CourseUnit, RequirementGroup, DegreeAuditResult
 
 #-----------------------------------------------------------------
+# Description:
 # Scans the pdf for courses and categorized them into either
 # completed/in-progress and required courses
-# Heavily modify with Gemini Flash 3.8
+#
+# Requirement:
+# Need to run the following script to get pdfplumber for this to work
+#   pip install pdfplumber
+# 
+# Developed with assistance from Google Gemini Flash 3.8 using agentic workflows
 #-----------------------------------------------------------------
 
 #-----------------------------------------------------------------
@@ -279,78 +286,41 @@ def is_course_completed(course_token, completed_set):
     return course_token in completed_set
 
 #-----------------------------------------------------------------
-# There could be cases where a completed course is put into a
-# different section to count towards that requirement. 
-# 
-# Note: This edge case to figure out what courses is still needed
-# because of the wrongful placement of the completed course, is
-# out of the scope for this project.
+# Builds results based on the models
 #-----------------------------------------------------------------
 
-def remove_completed(completed_courses, required_courses):
-    completed_set = set(completed_courses)
-    remaining_requirements = []
+def build_audit_result(all_lines: list) -> DegreeAuditResult:
+    completed = set(complete_course_scan(all_lines))
+    earned = earned_credits_scan(all_lines)
+    raw_blocks = normalize_uncounted_requirements(required_course_scan(all_lines))
 
-    for req in required_courses:
-        has_count = isinstance(req[0], int)
-        count = req[0] if has_count else None
-        options = req[1:] if has_count else req
+    requirement_groups: list[RequirementGroup] = []
 
-        unfulfilled = []
-        for c in options:
-            if not is_course_completed(c, completed_set):
-                unfulfilled.append(c)
+    for idx, block in enumerate(raw_blocks, start=1):
+        if not block:
+            continue
+        has_count = isinstance(block[0], int)
+        needed = block[0] if has_count else 1
+        raw_candidates = block[1:] if has_count else block
 
-        if unfulfilled:
-            if has_count:
-                remaining_requirements.append([count] + unfulfilled)
-            else:
-                remaining_requirements.append(unfulfilled)
+        # Parse tokens into CourseUnit objects and filter completed ones immediately
+        active_units = []
+        for token in raw_candidates:
+            unit = CourseUnit.from_token(str(token))
+            if not unit.is_completed(completed):
+                active_units.append(unit)
 
-    return remaining_requirements
-
-#-----------------------------------------------------------------
-# Opens the pdf and extract the courses to their corresponding values 
-#-----------------------------------------------------------------
-
-def scan_pdf(pdf_path):
-    audit = []
-    with pdfplumber.open(pdf_path) as pdf:
-        total_pages = len(pdf.pages)
-        if total_pages > MAX_ALLOWED_PAGES:
-            raise ValueError(
-                f"Document has {total_pages} pages, exceeding the {MAX_ALLOWED_PAGES}-page limit."
+        if active_units:
+            requirement_groups.append(
+                RequirementGroup(
+                    group_name=f"Requirement {idx}",
+                    courses_needed=min(needed, len(active_units)),
+                    units=active_units
+                )
             )
 
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                audit.extend(page_text.splitlines())
-
-    completed_courses = complete_course_scan(audit)
-    required_courses = remove_completed(
-        completed_courses,
-        normalize_uncounted_requirements(required_course_scan(audit))
+    return DegreeAuditResult(
+        completed_courses=completed,
+        earned_credits=earned,
+        requirements=requirement_groups
     )
-    earned_credits = earned_credits_scan(audit)
-
-    return completed_courses, required_courses, earned_credits, audit
-
-#-----------------------------------------------------------------
-# Testing
-#-----------------------------------------------------------------
-
-# completed_courses, required_courses, credit, audit = scan_pdf("audit1.pdf")
-
-# print("Credit:")
-# print(credit)
-
-# print()
-
-# print("Completed Courses:")
-# print(completed_courses)
-
-# print()
-
-# print("Required Courses:")
-# print(required_courses)

@@ -21,6 +21,8 @@ from playwright.async_api import async_playwright
 # 
 # How to use it:
 # Type "python UMB_course_scraper.py" to run and press "Ctrl + C" to end it early
+#
+# Developed with assistance from Google Gemini Flash 3.8 using agentic workflows
 #-----------------------------------------------------------------
 
 BASE_URL = "https://online.umb.edu/courses/"    # The website where it scans for courses
@@ -53,7 +55,6 @@ def split_course_identifier(raw_name: str) -> tuple[str, str]:
         course_number = match.group(2).strip().upper()
         return course_name, course_number
     return raw_name, ""
-
 
 #-----------------------------------------------------------------
 # Converts credits string into a numeric float/int or None
