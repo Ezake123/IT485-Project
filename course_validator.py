@@ -102,70 +102,62 @@ def build_requirement_groups(
 
 
 #--------------------------------------------------------------
-# Explains why courses from the open requirements didn't make it
-# into the schedule, so the page can say "why not more?"
+# Explains, per requirement, why the schedule didn't cover it:
+#   "none"    - no classes are available to satisfy it right now
+#               (all need prerequisites, are full, don't fit, or aren't offered)
+#   "partial" - some of it was scheduled, but nothing else is available
+#   "limit"   - classes were available, but the course/credit limit was reached
 #--------------------------------------------------------------
 
-def explain_unscheduled(requirements, catalog: CatalogManager, completed: Set[str], earned: float,
-                        scheduled: Set[str], schedule_sections, prefs, credits_used: int) -> List[dict]:
+def _course_reason(cid, catalog, completed, earned, scheduled, schedule_sections, prefs):
     from scheduler import section_meets_preferences, conflicts_with
-    from models import spaced
+    course, sections = catalog.get_course(cid), catalog.get_sections(cid)
+    if not course or not sections:
+        return "offered"
+    min_credits = (course.prerequisites or {}).get("min_credits")
+    if (min_credits and earned < min_credits) or any(
+            not course.is_coreq_group(g) and not any(c in completed for c in g)
+            for g in course.prerequisites_cnf):
+        return "prereq"
+    if not any(section_meets_preferences(s, prefs) for s in sections):
+        return "full" if prefs.open_seats_only and all(s.is_full for s in sections) else "prefs"
+    if not any(section_meets_preferences(s, prefs) and not conflicts_with(s, schedule_sections) for s in sections):
+        return "conflict"
+    if any(course.is_coreq_group(g) and not any(c in completed or c in scheduled for c in g)
+           for g in course.prerequisites_cnf):
+        return "coreq"
+    return "limit"
 
+
+def explain_requirements(requirements, catalog: CatalogManager, completed: Set[str], earned: float,
+                         fills: dict, schedule_sections, prefs) -> List[dict]:
     completed = {course_id(c) for c in completed}
-    reasons = {}   # course -> (reason key, detail)
+    scheduled = set(fills)
+    out = []
 
-    candidates = []
     for req in requirements:
+        name = req.get("name") or "Requirement"
+        need = req.get("need", 1)
+        is_credits = isinstance(need, dict)
+        filled = sum(1 for group in fills.values() if group == name)
+        if filled and (is_credits or filled >= int(need or 1)):
+            continue   # covered by this schedule
+
         exclude = {course_id(c) for c in req.get("exclude") or []}
+        reasons = set()
         for token in req.get("options") or []:
             for expanded in expand_token(str(token), catalog, exclude):
                 for cid in re.split(r"[&|]", expanded):
-                    if cid and cid not in completed and cid not in scheduled and cid not in candidates:
-                        candidates.append(cid)
+                    if cid and cid not in completed and cid not in scheduled:
+                        reasons.add(_course_reason(cid, catalog, completed, earned, scheduled, schedule_sections, prefs))
 
-    for cid in candidates:
-        course, sections = catalog.get_course(cid), catalog.get_sections(cid)
-        if not course or not sections:
-            reasons[cid] = ("offered", "")
-            continue
-        hard = []
-        min_credits = (course.prerequisites or {}).get("min_credits")
-        if min_credits and earned < min_credits:
-            hard.append(f"{min_credits} earned credits")
-        hard += [" or ".join(spaced(c) for c in g) for g in course.prerequisites_cnf
-                 if not course.is_coreq_group(g) and not any(c in completed for c in g)]
-        coreq_missing = [g for g in course.prerequisites_cnf if course.is_coreq_group(g)
-                         and not any(c in completed or c in scheduled for c in g)]
-        if hard:
-            reasons[cid] = ("prereq", hard[0])
-        elif not any(section_meets_preferences(s, prefs) for s in sections):
-            if prefs.open_seats_only and all(s.is_full for s in sections):
-                reasons[cid] = ("full", "")
-            else:
-                reasons[cid] = ("prefs", "")
-        elif not any(section_meets_preferences(s, prefs) and not conflicts_with(s, schedule_sections) for s in sections):
-            reasons[cid] = ("conflict", "")
-        elif coreq_missing:
-            reasons[cid] = ("coreq", " or ".join(spaced(c) for c in coreq_missing[0]))
-        else:
-            reasons[cid] = ("limit", "")
-
-    labels = {
-        "prereq": "Need a prerequisite first",
-        "coreq": "Must be taken at the same time as another course",
-        "full": "Every section is full",
-        "prefs": "No sections on your days and times",
-        "conflict": "Every section conflicts with your schedule",
-        "limit": "Over your course or credit limit",
-        "offered": "Not offered this term",
-    }
-    groups = []
-    for key in ["conflict", "full", "prefs", "coreq", "limit", "prereq", "offered"]:
-        items = [(c, d) for c, (k, d) in reasons.items() if k == key]
-        if items:
-            groups.append({
-                "key": key,
-                "label": labels[key],
-                "courses": [{"course": spaced(c), "detail": d} for c, d in items],
-            })
-    return groups
+        status = "limit" if "limit" in reasons else ("partial" if filled else "none")
+        out.append({
+            "requirement": name,
+            "status": status,
+            "filled": filled,
+            "need": f"{need['credits']} credits" if is_credits else int(need or 1),
+            # which preference changes might help (used for the quick-fix buttons)
+            "could_help": sorted(reasons & {"full", "prefs", "conflict", "coreq"}),
+        })
+    return out

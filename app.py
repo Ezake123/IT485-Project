@@ -4,7 +4,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from pdf_scanner import read_pdf_lines, analyze_audit, AuditError
 from catalog import load_catalog, lookup_courses, section_json, plan_term, CatalogUnavailable
 from models import SchedulePreferences, parse_time_value, course_id, spaced, DAY_ORDER
-from course_validator import build_requirement_groups, explain_unscheduled
+from course_validator import build_requirement_groups, explain_requirements
 from scheduler import solve_schedule
 
 # Reads SUPABASE_URL / SUPABASE_KEY / PLAN_TERM from a .env file when running locally
@@ -241,8 +241,8 @@ def schedule():
                     warnings.append(f"{spaced(cid)} must be taken with {' or '.join(spaced(c) for c in group)}.")
 
     try:
-        why_not = explain_unscheduled(reqs, catalog, completed, earned, set(fills),
-                                      result["sections"], prefs, result["credits"])
+        why_not = explain_requirements(reqs, catalog, completed, earned, fills,
+                                       result["sections"], prefs) if data.get("mode") != "selected" else []
     except Exception:
         traceback.print_exc()
         why_not = []
