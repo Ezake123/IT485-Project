@@ -153,6 +153,7 @@ def explain_requirements(requirements, catalog: CatalogManager, completed: Set[s
 
         status = "limit" if "limit" in reasons else ("partial" if filled else "none")
         out.append({
+            "id": req.get("id"),
             "requirement": name,
             "status": status,
             "filled": filled,

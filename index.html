@@ -203,6 +203,11 @@ S.seen=true;S.sel=[];S.selReq={};S.pick={};S.sched=null;go(2)}
 
 // "Intro Biology requirement - take two courses" -> "Intro Biology"
 const shortName=t=>{t=String(t||'').replace(/\s*-\s*take\b.*$/i,'').replace(/^take an?\s+/i,'').replace(/\brequirement\b/ig,'').replace(/\s*-\s*$/,'').replace(/\s{2,}/g,' ').trim();return t?t[0].toUpperCase()+t.slice(1):'Requirement'};
+// Generic titles like "Required Courses" get their audit section in front: "Economics Major – Required Courses"
+const GENERIC=/^(required|core|major|minor|other)?\s*(courses?|requirements?|electives?|classes)$/i;
+const fullName=r=>GENERIC.test(r.n.trim())&&r.g?`${r.g} – ${r.n}`:r.n;
+// A few of a requirement's course options, e.g. "ECON 101, ECON 102, ECON 201 and 3 more"
+const preview=(o,n=4)=>o.slice(0,n).map(lab).join(', ')+(o.length>n?` and ${o.length-n} more`:'');
 const errBox=(m,h="We couldn't use that file.")=>`<div class="errbox" role="alert"><b>${esc(h)}</b><p>${esc(m)}</p></div>`;
 
 async function readAudit(url,opts){const st=$('#st');try{load(await api(url,opts))}catch(e){st.innerHTML=errBox(friendly(e))}}
@@ -275,9 +280,9 @@ reqs.forEach(r=>{const codes=codesOf(r);
 const known=codes.filter(c=>RC[c]).map(c=>({c,m:miss(c),n:unlocks(c)})).sort((a,b)=>a.m.length-b.m.length||(RC[b.c][3].length?1:0)-(RC[a.c][3].length?1:0)||b.n-a.n);
 const unknown=codes.filter(c=>!RC[c]);
 const emptyR=rawCodes(r).filter(c=>isRange(c)&&!(S.ranges[c]||[]).some(x=>!S.done.has(x)));
-h+=`<h3>${esc(r.n)}${r.cr?` <small>${r.cr} credits needed</small>`:r.left>1?` <small>choose ${r.left}</small>`:''}</h3>`+known.map(({c,m,n})=>{const on=S.sel.includes(c),x=RC[c],ns=x[3].length,open=x[3].filter(o=>!o.full).length;
+h+=`<h3>${esc(fullName(r))}${r.cr?` <small>${r.cr} credits needed</small>`:r.left>1?` <small>choose ${r.left}</small>`:''}</h3>`+known.map(({c,m,n})=>{const on=S.sel.includes(c),x=RC[c],ns=x[3].length,open=x[3].filter(o=>!o.full).length;
 const info=`${x[1]||'?'} credits, ${ns?`${ns} section${ns>1?'s':''}${open<ns?` (${open} with open seats)`:''}`:'not offered this term'}${n?`, unlocks ${n} more course${n>1?'s':''}`:''}`;
-const right=m.length?`<span class="need">Needs ${esc(m.join(', '))}</span>`:!ns?'<span class="need">No sections</span>':`<button class="btn${on?'':' alt'}" data-t="${esc(c)}" data-rq="${esc(r.n)}" aria-pressed="${on}">${on?'Added':'Add'}</button>`;
+const right=m.length?`<span class="need">Needs ${esc(m.join(', '))}</span>`:!ns?'<span class="need">No sections</span>':`<button class="btn${on?'':' alt'}" data-t="${esc(c)}" data-rq="${esc(fullName(r))}" aria-pressed="${on}">${on?'Added':'Add'}</button>`;
 return `<div class="course${m.length||!ns?' lock':''}"><div><b>${esc(c)}</b> ${esc(title(c))}<small>${info}</small>${x[4]?`<small>Prerequisites: ${esc(x[4])}</small>`:''}${!m.length&&coMiss(c).length?`<small class="co">Take in the same semester as ${esc(coMiss(c).join(', '))}: add it too, unless you've already taken it.</small>`:''}</div>${right}${secList(c)}</div>`}).join('')
 +unknown.map(c=>`<div class="course lock"><div><b>${esc(c)}</b><small>Not offered${S.term?' in '+esc(S.term):''}</small></div></div>`).join('')
 +emptyR.map(c=>`<div class="course lock"><div><b>Any ${esc(c)}</b><small>No other courses in this range are offered${S.term?' in '+esc(S.term):''}</small></div></div>`).join('')});
@@ -312,7 +317,7 @@ el.innerHTML=h+`<div id="ge" aria-live="polite">${S.busy?'<p class="lead">Buildi
 async function build(mode){const ge=$('#ge');S.busy=true;rBuild();
 const body={mode,completed:[...S.done],earned_credits:S.earned,prefs:S.prefs,pins:S.pick};
 if(mode=='auto'){const reqs=rem();
-body.requirements=reqs.map(r=>({name:r.n,need:r.cr?{credits:r.cr}:r.left,options:r.o,exclude:S.reqEx[r.i]||[]}))}
+body.requirements=reqs.map(r=>({id:r.i,name:fullName(r),need:r.cr?{credits:r.cr}:r.left,options:r.o,exclude:S.reqEx[r.i]||[]}))}
 else body.courses=S.sel.map(c=>({code:c,requirement:S.selReq[c]||''}));
 try{const d=await postJSON('/api/schedule',body);S.busy=false;S.term=d.term||S.term;
 if(!d.sections.length){rBuild();S.lastFail={...d,mode,courses:[]};$('#ge').innerHTML=whyNot({...d,mode,courses:[],max_courses:d.max_courses})+errBox(mode=='auto'?'No eligible courses fit these preferences. Try allowing more days, a wider time window, or full sections.':'None of your courses fit these preferences. Try allowing more days or a wider time window.',"Couldn't build a schedule.");return}
@@ -328,7 +333,8 @@ const help=new Set(g.flatMap(x=>x.status=='limit'?[]:x.could_help||[])),fix=[];
 if(S.prefs.open_only&&(help.has('full')||help.has('conflict')||help.has('coreq')))fix.push('<button class="btn alt sm" data-fix="full">Include full sections</button>');
 if(help.has('prefs')||help.has('conflict')||help.has('coreq'))fix.push('<button class="btn alt sm" data-fix="times">Allow all days and times</button>');
 const order={none:0,partial:1,limit:2};
-return `<div class="why"><b>Only ${d.courses.length} of ${d.max_courses} courses fit. These requirements aren't covered:</b><ul>${g.slice().sort((a,b)=>order[a.status]-order[b.status]).map(x=>`<li><b>${esc(x.requirement)}:</b> <span>${msg(x)}</span></li>`).join('')}</ul>${fix.length?`<p class="note" style="margin:10px 0 6px">Changing your preferences might open up more classes:</p><div class="row" style="margin:0">${fix.join('')}</div>`:''}</div>`}
+const opts=x=>{const r=S.reqAll[x.id]?rem().find(y=>y.i==x.id):null;return r&&r.o.length?`<br><small>Covers: ${esc(preview(r.o))}</small>`:''};
+return `<div class="why"><b>Only ${d.courses.length} of ${d.max_courses} courses fit. These requirements aren't covered:</b><ul>${g.slice().sort((a,b)=>order[a.status]-order[b.status]).map(x=>`<li><b>${esc(x.requirement)}:</b> <span>${msg(x)}</span>${opts(x)}</li>`).join('')}</ul>${fix.length?`<p class="note" style="margin:10px 0 6px">Changing your preferences might open up more classes:</p><div class="row" style="margin:0">${fix.join('')}</div>`:''}</div>`}
 
 //-------------------------
 // Step 5: final schedule
