@@ -1,233 +1,312 @@
 from __future__ import annotations
 from datetime import time
+from typing import List, Optional, Set
 from itertools import product
-from typing import Dict, List, Optional, Set, Tuple
 from models import Section, RequirementGroup, CourseUnit, CatalogManager, SchedulePreferences
+import re
 
-#--------------------------------------------------------------
+#-----------------------------------------------------------------
 # Description:
-# Builds a conflict-free schedule from requirement groups.
-# Works through the requirements in order, trying each option's sections
-# (lecture + discussion pairs are kept together) and backtracking when
-# something doesn't fit. Stops at the student's course/credit limits.
-#--------------------------------------------------------------
+# The script to calculate and generate the most optimized schedule
+#
+# Developed with assistance from Google Gemini using agentic workflows 
+#-----------------------------------------------------------------
 
-SEARCH_LIMIT = 50000   # max search steps, so big requirement lists can't hang the server
+#-----------------------------------------------------------------
+# Checks if the section is a discussion because they need to be 
+# paired up with a lecture course
+#-----------------------------------------------------------------
 
+def is_discussion_section(sec: Section) -> bool:
+    return bool(sec.section and sec.section.strip().upper().endswith('D'))
+
+#-----------------------------------------------------------------
+# Retrieves sections from the course, and bundles discussion with
+# lectures
+#-----------------------------------------------------------------
+
+def get_course_section_bundles(
+    course_id: str,
+    catalog: CatalogManager,
+    current_schedule: List[Section],
+    preferences: Optional[SchedulePreferences]
+) -> List[List[Section]]:
+    raw_sections = catalog.get_sections(course_id)
+    if not raw_sections:
+        match = re.match(r"^([A-Za-z]+)\s*(\d+[A-Za-z]?)$", course_id.strip())
+        if match:
+            alt_id = f"{match.group(1).upper()} {match.group(2).upper()}"
+            raw_sections = catalog.get_sections(alt_id)
+    if not raw_sections:
+        return []
+
+    # 1. Filter sections that respect user preferences and non-overlapping times
+    eligible = [
+        s for s in raw_sections
+        if section_meets_preferences(s, preferences)
+        and not section_conflicts_with_schedule(s, current_schedule)
+    ]
+    if not eligible:
+        return []
+
+    # Check whether the catalog for this course has discussion sections
+    all_has_discussions = any(is_discussion_section(s) for s in raw_sections)
+
+    if all_has_discussions:
+        lectures = [s for s in eligible if not is_discussion_section(s)]
+        discussions = [s for s in eligible if is_discussion_section(s)]
+
+        # Must have at least one lecture and one discussion available
+        if not lectures or not discussions:
+            return []
+
+        paired_bundles = []
+        for lec in lectures:
+            for disc in discussions:
+                # Ensure the lecture and discussion do not collide with each other
+                if not intervals_collide(lec.days, lec.start_time, lec.end_time,
+                                         disc.days, disc.start_time, disc.end_time):
+                    paired_bundles.append([lec, disc])
+        return paired_bundles
+
+    # Standard course without mandatory discussion breakout sections
+    return [[s] for s in eligible]
+
+#-----------------------------------------------------------------
+# Converts time value into minutes for calculation
+#-----------------------------------------------------------------
 
 def time_to_minutes(t) -> int:
     if t is None:
         return 0
+
     if isinstance(t, time):
         return t.hour * 60 + t.minute
-    parts = str(t).strip().split(":")
-    return int(parts[0]) * 60 + int(parts[1]) if len(parts) >= 2 else 0
 
+    if isinstance(t, str):
+        clean_time = t.strip()
+        parts = clean_time.split(":")
+        if len(parts) >= 2:
+            return int(parts[0]) * 60 + int(parts[1])
 
-def intervals_collide(a: Section, b: Section) -> bool:
-    """Two sections overlap if they share a day and their times overlap. TBA/online never conflicts."""
-    if not a.has_meeting_time or not b.has_meeting_time:
-        return False
-    if not set(a.days).intersection(b.days):
-        return False
-    return max(time_to_minutes(a.start_time), time_to_minutes(b.start_time)) < \
-        min(time_to_minutes(a.end_time), time_to_minutes(b.end_time))
+    return 0
 
-
-def conflicts_with(sec: Section, schedule: List[Section]) -> bool:
-    return any(intervals_collide(sec, other) for other in schedule)
-
+#-----------------------------------------------------------------
+# Verifies if the section satisfies user preferences/restrictions
+#-----------------------------------------------------------------
 
 def section_meets_preferences(sec: Section, prefs: Optional[SchedulePreferences]) -> bool:
+    # 1. Delivery Mode Check
+    if prefs:
+        if prefs.delivery_mode == "In-person" and sec.is_online:
+            return False
+        if prefs.delivery_mode == "Online" and not sec.is_online:
+            return False
+
+    # 2. Capacity Limit Check (skipped if user toggles ignore_capacity).
+    # Runs before the online shortcut below so full online sections are
+    # excluded too. Uses Section.is_full, which treats capacity 0 as unknown.
+    if prefs and not getattr(prefs, "ignore_capacity", False) and sec.is_full:
+        return False
+
+    # 3. Allow asynchronous online courses (no scheduled meeting days/times)
+    if sec.is_online and (sec.start_time is None or not sec.days):
+        return True
+
+    # Reject in-person database NULLs / missing meeting details
+    if sec.start_time is None or sec.end_time is None or not sec.days:
+        return False
+
     if not prefs:
         return True
-    if prefs.open_seats_only and sec.is_full:
-        return False
-    if prefs.delivery_mode == "In-person" and sec.is_online:
-        return False
-    if prefs.delivery_mode == "Online" and not sec.is_online:
-        return False
 
-    # Day and time limits only apply to sections that have meeting times
-    if sec.has_meeting_time:
-        if prefs.allowed_days is not None and not set(sec.days).issubset(set(prefs.allowed_days)):
+    # 4. Allowed Days Filter
+    if prefs.allowed_days is not None:
+        allowed_set = {d.strip() for d in prefs.allowed_days}
+        if not set(sec.days).issubset(allowed_set):
             return False
-        if prefs.earliest_start and time_to_minutes(sec.start_time) < time_to_minutes(prefs.earliest_start):
+
+    # 5. Earliest Start Time Limit
+    if prefs.earliest_start is not None:
+        if time_to_minutes(sec.start_time) < time_to_minutes(prefs.earliest_start):
             return False
-        if prefs.latest_end and time_to_minutes(sec.end_time) > time_to_minutes(prefs.latest_end):
+
+    # 6. Latest End Time Limit
+    if prefs.latest_end is not None:
+        if time_to_minutes(sec.end_time) > time_to_minutes(prefs.latest_end):
             return False
+
     return True
 
+#-----------------------------------------------------------------
+# Checks whether two sections overlap
+#-----------------------------------------------------------------
 
-def course_bundles(cid: str, catalog: CatalogManager, schedule: List[Section],
-                   prefs: Optional[SchedulePreferences], pins: Dict[str, str]) -> List[List[Section]]:
-    """
-    Section choices for one course. If the course has discussion sections ('01D'),
-    each choice is a lecture + discussion pair; otherwise a single section.
-    """
-    raw = catalog.get_sections(cid)
-    if not raw:
-        return []
+def intervals_collide(
+    days_a: Optional[List[str]], start_a: Optional[time], end_a: Optional[time],
+    days_b: Optional[List[str]], start_b: Optional[time], end_b: Optional[time]
+) -> bool:
+    if not days_a or not days_b or not start_a or not end_a or not start_b or not end_b:
+        return False
 
-    pinned = next((s for s in raw if s.class_code == pins.get(cid)), None)
-    if pinned:
-        # Keep the chosen section; if the course has discussions, still offer the
-        # other half of the pair (discussions for a pinned lecture, or vice versa)
-        eligible = [pinned] + [s for s in raw if s.is_discussion != pinned.is_discussion
-                               and section_meets_preferences(s, prefs)]
-    else:
-        eligible = [s for s in raw if section_meets_preferences(s, prefs)]
-    eligible = [s for s in eligible if not conflicts_with(s, schedule)]
+    if not set(days_a).intersection(set(days_b)):
+        return False
 
-    # Sections with open seats first, then earlier start times
-    eligible.sort(key=lambda s: (s.is_full, not s.has_meeting_time, time_to_minutes(s.start_time)))
+    s_a = time_to_minutes(start_a)
+    e_a = time_to_minutes(end_a)
+    s_b = time_to_minutes(start_b)
+    e_b = time_to_minutes(end_b)
 
-    if any(s.is_discussion for s in raw):
-        lectures = [s for s in eligible if not s.is_discussion]
-        discussions = [s for s in eligible if s.is_discussion]
-        bundles = [[lec, disc] for lec in lectures for disc in discussions if not intervals_collide(lec, disc)]
-    else:
-        bundles = [[s] for s in eligible]
-    return unique_by_time(bundles)
+    return max(s_a, s_b) < min(e_a, e_b)
 
+#-----------------------------------------------------------------
+# Checks if the section overlaps with already selected sections
+#-----------------------------------------------------------------
 
-def unique_by_time(bundles: List[List[Section]]) -> List[List[Section]]:
-    """
-    Sections that meet at the same times are interchangeable for avoiding conflicts,
-    so keep only the first (best) one of each. This keeps the search fast for
-    courses with dozens of sections.
-    """
-    seen, out = set(), []
-    for bundle in bundles:
-        key = tuple((tuple(s.days or []), s.start_time, s.end_time, s.is_online) for s in bundle)
-        if key not in seen:
-            seen.add(key)
-            out.append(bundle)
-    return out
+def section_conflicts_with_schedule(sec: Section, schedule: List[Section]) -> bool:
+    for existing in schedule:
+        if intervals_collide(sec.days, sec.start_time, sec.end_time,
+                             existing.days, existing.start_time, existing.end_time):
+            return True
+    return False
 
+#-----------------------------------------------------------------
+# Retrieves viable section combinations for a CourseUnit
+#-----------------------------------------------------------------
 
-def unit_options(unit: CourseUnit, catalog: CatalogManager, schedule: List[Section],
-                 prefs: Optional[SchedulePreferences], pins: Dict[str, str]) -> List[Tuple[List[str], List[Section]]]:
-    """
-    Ways to schedule one requirement option, as (courses taken, sections) pairs.
-    OR -> one alternative; AND -> every course together with no internal conflicts.
-    """
+def get_compatible_unit_options(
+    unit: CourseUnit,
+    catalog: CatalogManager,
+    current_schedule: List[Section],
+    preferences: Optional[SchedulePreferences] = None
+) -> List[List[Section]]:
     if unit.unit_type == "OR":
-        return [([cid], b) for cid in unit.courses for b in course_bundles(cid, catalog, schedule, prefs, pins)]
+        valid_options = []
+        for cid in unit.courses:
+            bundles = get_course_section_bundles(cid, catalog, current_schedule, preferences)
+            valid_options.extend(bundles)
+        return valid_options
 
     if unit.unit_type == "AND":
-        per_course = []
+        bundles_per_course = []
         for cid in unit.courses:
-            bundles = course_bundles(cid, catalog, schedule, prefs, pins)
+            bundles = get_course_section_bundles(cid, catalog, current_schedule, preferences)
             if not bundles:
                 return []
-            per_course.append(bundles)
-        combos = []
-        for combo in product(*per_course):
-            flat = [s for bundle in combo for s in bundle]
-            if not any(intervals_collide(flat[i], flat[j])
-                       for i in range(len(flat)) for j in range(i + 1, len(flat))):
-                combos.append((list(unit.courses), flat))
-            if len(combos) >= 50:
-                break
-        return combos
+            bundles_per_course.append(bundles)
 
-    cid = unit.courses[0]
-    return [([cid], b) for b in course_bundles(cid, catalog, schedule, prefs, pins)]
+        valid_combos = []
+        for combo in product(*bundles_per_course):
+            flat_secs = [sec for sublist in combo for sec in sublist]
+            has_internal_conflict = False
+            for i in range(len(flat_secs)):
+                for j in range(i + 1, len(flat_secs)):
+                    if intervals_collide(flat_secs[i].days, flat_secs[i].start_time, flat_secs[i].end_time,
+                                         flat_secs[j].days, flat_secs[j].start_time, flat_secs[j].end_time):
+                        has_internal_conflict = True
+                        break
+                if has_internal_conflict:
+                    break
+            if not has_internal_conflict:
+                valid_combos.append(flat_secs)
+        return valid_combos
 
+    single_id = unit.courses[0]
+    return get_course_section_bundles(single_id, catalog, current_schedule, preferences)
 
-class _SearchLimit(Exception):
-    pass
-
+#-----------------------------------------------------------------
+# Calculate and generate a schedule that fits with the requirements
+# and incorporates any locked-in fixed sections
+#-----------------------------------------------------------------
 
 def solve_schedule(
     requirements: List[RequirementGroup],
     catalog: CatalogManager,
+    target_count: int = 5,
     preferences: Optional[SchedulePreferences] = None,
-    pins: Optional[Dict[str, str]] = None,
-    completed: Optional[Set[str]] = None,
-    strict_coreqs: bool = False,
-) -> dict:
-    """
-    Returns {"sections": [...], "fills": {"CHEM115": "Intro Chemistry", ...}, "complete": bool}
-    "complete" is True when every requirement's needed count was scheduled
-    (or the course/credit limit was reached).
+    fixed_sections: Optional[List[Section]] = None
+) -> Optional[List[Section]]:
+    # Pre-seed with user locked sections
+    seed_schedule: List[Section] = list(fixed_sections) if fixed_sections else []
+    seed_enrolled: Set[str] = {f"{s.course_name.strip()}{s.course_number.strip()}".upper() for s in seed_schedule}
 
-    strict_coreqs: only accept schedules where every course's co-requisites are
-    completed or in the same schedule (e.g. no PHYSIC 181 lab without its lecture).
-    """
-    prefs = preferences or SchedulePreferences()
-    pins = pins or {}
-    max_courses = 99 if prefs.fit_maximum else max(1, prefs.max_courses)
-    max_credits = max(1, prefs.max_credits)
-    total_needed = sum(r.courses_needed for r in requirements)
+    # If already at or above target, or no other requirements to solve, return locked items
+    if not requirements or len(seed_schedule) >= target_count:
+        return seed_schedule if seed_schedule else None
 
-    best = {"score": (-1, -1), "sections": [], "fills": {}}
-    steps = 0
+    effective_target = target_count
+    best_schedule: List[Section] = list(seed_schedule)
+    best_course_count = len(seed_enrolled)
 
-    def credits_of(courses: List[str]) -> int:
-        return sum(catalog.credits_for(c) or 3 for c in courses)
+    MAX_SEARCH_ITERATIONS = 120000
+    iterations = 0
 
-    completed = completed or set()
+    def backtrack(
+        req_idx: int,
+        cand_idx: int,
+        remaining_needed_in_req: int,
+        active_sched: List[Section],
+        active_enrolled: Set[str]
+    ) -> Optional[List[Section]]:
+        nonlocal best_schedule, best_course_count, iterations
+        iterations += 1
 
-    def coreqs_ok(fills) -> bool:
-        if not strict_coreqs:
-            return True
-        for cid in fills:
-            course = catalog.get_course(cid)
-            for group in (course.prerequisites_cnf if course else []):
-                if course.is_coreq_group(group) and not any(c in completed or c in fills for c in group):
-                    return False
-        return True
+        if iterations > MAX_SEARCH_ITERATIONS:
+            return best_schedule if best_schedule else None
 
-    def record(schedule, fills, credits):
-        if not coreqs_ok(fills):
-            return
-        score = (len(fills), credits)
-        if score > best["score"]:
-            best.update(score=score, sections=list(schedule), fills=dict(fills))
+        current_count = len(active_enrolled)
 
-    def backtrack(req_idx: int, cand_idx: int, remaining: int,
-                  schedule: List[Section], fills: Dict[str, str], credits: int) -> bool:
-        nonlocal steps
-        steps += 1
-        if steps > SEARCH_LIMIT:
-            raise _SearchLimit()
+        if current_count > best_course_count:
+            best_course_count = current_count
+            best_schedule = list(active_sched)
 
-        record(schedule, fills, credits)
-        if (len(fills) >= max_courses or len(fills) >= total_needed) and coreqs_ok(fills):
-            return True
+        if current_count >= effective_target:
+            return active_sched
+
         if req_idx >= len(requirements):
-            return False
+            return None
 
-        req = requirements[req_idx]
-        if remaining == 0 or cand_idx >= len(req.units):
-            if req_idx + 1 >= len(requirements):
-                return False
-            return backtrack(req_idx + 1, 0, requirements[req_idx + 1].courses_needed, schedule, fills, credits)
+        current_req = requirements[req_idx]
+        candidates = current_req.units
 
-        unit = req.units[cand_idx]
-        if not any(c in fills for c in unit.courses):
-            for taken, sections in unit_options(unit, catalog, schedule, prefs, pins):
-                added = credits_of(taken)
-                if credits + added > max_credits or len(fills) + len(taken) > max_courses:
-                    continue
-                new_fills = dict(fills, **{c: req.group_name for c in taken})
-                if backtrack(req_idx, cand_idx + 1, remaining - 1, schedule + sections, new_fills, credits + added):
-                    return True
+        if remaining_needed_in_req == 0 or cand_idx >= len(candidates):
+            next_req_idx = req_idx + 1
+            if next_req_idx >= len(requirements):
+                return None
+            next_needed = requirements[next_req_idx].courses_needed
+            return backtrack(next_req_idx, 0, next_needed, active_sched, active_enrolled)
 
-        # Skip this option
-        return backtrack(req_idx, cand_idx + 1, remaining, schedule, fills, credits)
+        unit = candidates[cand_idx]
+        unit_courses = [c.upper() for c in unit.courses]
 
-    if requirements:
-        try:
-            backtrack(0, 0, requirements[0].courses_needed, [], {}, 0)
-        except _SearchLimit:
-            pass
+        if any(c in active_enrolled for c in unit_courses):
+            return backtrack(req_idx, cand_idx + 1, remaining_needed_in_req, active_sched, active_enrolled)
 
-    return {
-        "sections": best["sections"],
-        "fills": best["fills"],
-        "credits": max(best["score"][1], 0),
-        "complete": len(best["fills"]) >= min(max_courses, total_needed),
-    }
+        section_options = get_compatible_unit_options(unit, catalog, active_sched, preferences)
+
+        for sec_group in section_options:
+            new_sched = list(active_sched) + sec_group
+            new_enrolled = set(active_enrolled).union(unit_courses)
+
+            result = backtrack(
+                req_idx=req_idx,
+                cand_idx=cand_idx + 1,
+                remaining_needed_in_req=remaining_needed_in_req - 1,
+                active_sched=new_sched,
+                active_enrolled=new_enrolled
+            )
+            if result is not None:
+                return result
+
+        return backtrack(
+            req_idx=req_idx,
+            cand_idx=cand_idx + 1,
+            remaining_needed_in_req=remaining_needed_in_req,
+            active_sched=active_sched,
+            active_enrolled=active_enrolled
+        )
+
+    initial_needed = requirements[0].courses_needed
+    exact_match = backtrack(0, 0, initial_needed, seed_schedule, seed_enrolled)
+
+    return exact_match if exact_match is not None else (best_schedule if best_schedule else None)
