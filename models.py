@@ -3,33 +3,59 @@ from dataclasses import dataclass, field
 from datetime import time
 from typing import List, Optional, Set, Dict, Any
 
-def parse_time_value(val: Any) -> Optional[time]:
-    if not val:
-        return None
-    if isinstance(val, time):
-        return val
-    try:
-        parts = [int(p) for p in str(val).strip().split(":")]
-        if len(parts) >= 2:
-            if parts[0] >= 24:
-                return time(23, 59, 59)
-            return time(parts[0], parts[1], parts[2] if len(parts) > 2 else 0)
-    except Exception:
-        pass
-    return None
+#-----------------------------------------------------------------
+# Description:
+# Data models for degree audit and course scheduling pipeline
+#
+# Developed with assistance from Google Gemini using agentic workflows 
+#-----------------------------------------------------------------
+
+# -----------------------------------------------------------------
+# Centralized General Education Configuration & Token Mappings
+# -----------------------------------------------------------------
+
+# Canonical mapping from Token suffix -> Database catalog Gen Ed field
+GENED_TOKEN_MAP = {
+    "ARTS": "The Arts",
+    "THE_ARTS": "The Arts",
+    "HUMANITIES": "Humanities",
+    "ARTS_OR_HUMANITIES": "The Arts or Humanities",
+    "SOCIAL_AND_BEHAVIORAL_SCIENCES": "Social & Behavioral Sciences",
+    "NATURAL_SCIENCES": "Natural Sciences",
+    "NATURAL_SCIENCES_OR_MATH_TECH": "Natural Sciences or Mathematics & Technology",
+    "MATHEMATICS_TECHNOLOGY": "Mathematics & Technology",
+    "WORLD_LANGUAGES_OR_WORLD_CULTURES": "World Cultures or World Languages",
+    "WORLD_CULTURES": "World Cultures",
+    "WORLD_LANGUAGES": "World Languages"
+}
+
+# Ordered list of (Audit Display Name, Token Suffix) used for PDF scanning
+KNOWN_GENED_CATEGORIES = [
+    ("Social & Behavioral Sciences", "SOCIAL_AND_BEHAVIORAL_SCIENCES"),
+    ("World Languages or World Cultures", "WORLD_LANGUAGES_OR_WORLD_CULTURES"),
+    ("World Languages", "WORLD_LANGUAGES"),
+    ("World Cultures", "WORLD_CULTURES"),
+    ("Natural Sciences or Math/Technology", "NATURAL_SCIENCES_OR_MATH_TECH"),
+    ("Natural Sciences", "NATURAL_SCIENCES"),
+    ("Arts or Humanities", "ARTS_OR_HUMANITIES"),
+    ("Mathematics & Technology", "MATHEMATICS_TECHNOLOGY"),
+    ("Humanities", "HUMANITIES"),
+    ("The Arts", "ARTS"),
+]
 
 #--------------------------------------------------------------
-# For degree audits
+# Format for degree audits
 #--------------------------------------------------------------
 
+# Each courses scanned from the scanner
 @dataclass
 class CourseUnit:
-    """
-    Represents an atomic course, co-requisite set, or alternative unit.
-    - Single: unit_type='SINGLE', courses=['CS110']
-    - Corequisite: unit_type='AND', courses=['PHYSIC114', 'PHYSIC182']
-    - Alternative: unit_type='OR', courses=['BIOL210', 'BIOL212']
-    """
+    #-----------------------------------------------------------------
+    # Represents an atomic course, co-requisite set, or alternative unit.
+    # - Single: unit_type='SINGLE', courses=['CS110']
+    # - Corequisite: unit_type='AND', courses=['PHYSIC114', 'PHYSIC182']
+    # - Alternative: unit_type='OR', courses=['BIOL210', 'BIOL212']
+    #-----------------------------------------------------------------
     raw_token: str
     unit_type: str  # 'SINGLE', 'AND', 'OR'
     courses: List[str]
@@ -50,31 +76,33 @@ class CourseUnit:
             return any(c in completed_set for c in self.courses)
         return self.courses[0] in completed_set
 
+# Groups the courses into their corresponding requirement 
 @dataclass
 class RequirementGroup:
-    """Replaces raw [count, 'CS110', ...] nested lists."""
     group_name: str
     courses_needed: int
     units: List[CourseUnit] = field(default_factory=list)
 
+# Universal payload created by the scanner
 @dataclass
 class DegreeAuditResult:
-    """Universal transfer payload emitted directly by pdf_scanner.py."""
     completed_courses: Set[str]
     earned_credits: float
     requirements: List[RequirementGroup]
+    gen_ed_requirements: List[RequirementGroup] = field(default_factory=list)
 
 #--------------------------------------------------------------
-# Matches the data with Supabase
+# Format to match the data exactly like the ones in database
 #--------------------------------------------------------------
 
+#
 @dataclass
 class SchedulePreferences:
     earliest_start: Optional[time] = None       # e.g., time(9, 0)
     latest_end: Optional[time] = None           # e.g., time(17, 0)
     allowed_days: Optional[List[str]] = None    # e.g., ['M', 'Tu', 'W', 'Th', 'F']
     delivery_mode: str = "Any"                  # "In-person", "Online", or "Any"
-    fit_maximum: bool = False
+    ignore_capacity: bool = False               # Ignore capacity limit in schedule
 
 @dataclass
 class Section:
@@ -90,7 +118,7 @@ class Section:
     enrolled: Optional[int] = None
     instructors: List[str] = field(default_factory=lambda: ["TBA"])
     term: Optional[str] = None
-    credits: int = 0                             # <-- Defined on Section
+    credits: int = 0                            
 
     @property
     def course_id(self) -> str:
@@ -132,7 +160,7 @@ class Course:
     description: Optional[str] = None
     gen_ed: Optional[str] = None                # e.g., 'Arts/Humanities' or None
     prerequisites: Dict[str, Any] = field(default_factory=dict)
-    id: Optional[int] = None                    # Supabase BIGINT ID
+    id: Optional[int] = None                    # Supabase ID
 
     @property
     def course_id(self) -> str:
@@ -169,66 +197,86 @@ class Requirements:
     courses_needed: int
     candidate_courses: List[str]                # Can contain units like 'CHEM115&CHEM117' or 'BIOL210|BIOL212'
 
+#-----------------------------------------------------------------
+# Helper function to parse time vlaue from database
+#-----------------------------------------------------------------
+
+def parse_time_value(val: Any) -> Optional[time]:
+    if not val:
+        return None
+    if isinstance(val, time):
+        return val
+    try:
+        parts = [int(p) for p in str(val).strip().split(":")]
+        if len(parts) >= 2:
+            if parts[0] >= 24:
+                return time(23, 59, 59)
+            return time(parts[0], parts[1], parts[2] if len(parts) > 2 else 0)
+    except Exception:
+        pass
+    return None
+
+#-----------------------------------------------------------------
+# Manager for 
+#-----------------------------------------------------------------
+
 class CatalogManager:
     def __init__(self):
-        self.courses: Dict[str, Course] = {}                    # Keyed by 'AF470'
-        self.sections: Dict[str, List[Section]] = {}            # Keyed by 'AF470'
+        self.courses: Dict[str, Course] = {}                    
+        self.sections: Dict[str, List[Section]] = {}            
+
+    @staticmethod
+    def _normalize_id(course_id: str) -> str:
+        return str(course_id).replace(" ", "").strip().upper()
 
     def add_course(self, course: Course):
-        self.courses[course.course_id] = course
+        norm_id = self._normalize_id(course.course_id)
+        self.courses[norm_id] = course
 
     def add_section(self, section: Section):
-        cid = section.course_id
-        if cid not in self.sections:
-            self.sections[cid] = []
-        self.sections[cid].append(section)
+        norm_id = self._normalize_id(section.course_id)
+        if norm_id not in self.sections:
+            self.sections[norm_id] = []
+        self.sections[norm_id].append(section)
 
     def get_course(self, course_id: str) -> Optional[Course]:
-        return self.courses.get(course_id)
+        return self.courses.get(self._normalize_id(course_id))
 
     def get_sections(self, course_id: str) -> List[Section]:
-        return self.sections.get(course_id, [])
+        return self.sections.get(self._normalize_id(course_id), [])
 
     @classmethod
     def load_from_supabase_data(cls, courses_rows: List[dict], sections_rows: List[dict]) -> CatalogManager:
         manager = cls()
-        id_to_course: Dict[int, Course] = {}
 
         for row in courses_rows:
             course = Course(
                 id=row.get("id"),
-                course_name=row["course_name"],
-                course_number=row["course_number"],
+                course_name=str(row["course_name"]).strip(),
+                course_number=str(row["course_number"]).strip(),
                 description=row.get("description"),
                 gen_ed=row.get("gen_ed"),
                 prerequisites=row.get("prerequisites") or {}
             )
             manager.add_course(course)
-            if course.id is not None:
-                id_to_course[course.id] = course
 
         for row in sections_rows:
-            c_name = row.get("course_name")
-            c_num = row.get("course_number")
-
-            if not c_name and "course_id" in row and row["course_id"] in id_to_course:
-                matched_course = id_to_course[row["course_id"]]
-                c_name = matched_course.course_name
-                c_num = matched_course.course_number
+            c_name = str(row.get("course_name", "")).strip()
+            c_num = str(row.get("course_number", "")).strip()
 
             if c_name and c_num:
                 raw_credits = row.get("credits")
                 try:
-                    sec_credits = int(float(raw_credits)) if raw_credits is not None else 0
+                    sec_credits = int(float(raw_credits)) if raw_credits is not None else 3
                 except (ValueError, TypeError):
-                    sec_credits = 0
+                    sec_credits = 3
 
                 sec = Section(
-                    class_code=str(row["class_code"]),
+                    class_code=str(row.get("class_code", "")),
                     course_name=c_name,
                     course_number=c_num,
                     section=str(row.get("section", "")),
-                    days=row.get("days"),
+                    days=row.get("days") or [],
                     start_time=parse_time_value(row.get("start_time")),
                     end_time=parse_time_value(row.get("end_time")),
                     location=row.get("location"),

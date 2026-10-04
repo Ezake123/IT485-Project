@@ -1,6 +1,6 @@
 import pdfplumber
 import re
-from models import CourseUnit, RequirementGroup, DegreeAuditResult
+from models import CourseUnit, RequirementGroup, DegreeAuditResult, KNOWN_GENED_CATEGORIES
 
 #-----------------------------------------------------------------
 # Description:
@@ -11,7 +11,7 @@ from models import CourseUnit, RequirementGroup, DegreeAuditResult
 # Need to run the following script to get pdfplumber for this to work
 #   pip install pdfplumber
 # 
-# Developed with assistance from Google Gemini Flash 3.8 using agentic workflows
+# Developed with assistance from Google Gemini using agentic workflows
 #-----------------------------------------------------------------
 
 #-----------------------------------------------------------------
@@ -285,6 +285,85 @@ def is_course_completed(course_token, completed_set):
         
     return course_token in completed_set
 
+
+# -----------------------------------------------------------------
+# Scans specifically for General Education distribution requirements
+# -----------------------------------------------------------------
+
+GENED_SECTION_HEADERS = [
+    r"GENERAL\s+EDUCATION\s+DISTRIBUTION",
+    r"AREAS\s+OF\s+KNOWLEDGE"
+]
+
+def gen_ed_scan(all_lines: list) -> list[RequirementGroup]:
+    gen_ed_groups = []
+    in_gen_ed_section = False
+    current_category_name = None
+    current_category_token = None
+
+    needs_re = re.compile(r"Needs:\s*(\d+)\s*(?:Courses?|Course|Sub-Reqs?|Sets?)", re.IGNORECASE)
+    header_re = re.compile(r"|".join(GENED_SECTION_HEADERS), re.IGNORECASE)
+
+    # Definite exit marker: Only exit when reaching the Major block or End of Audit
+    exit_re = re.compile(r"(^[A-Z\s]+MAJOR\s*\*{4,}|SUMMARY OF COURSES TAKEN|LEGEND\b)", re.IGNORECASE)
+
+    for raw_line in all_lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        # Strip audit status prefixes like "+", "NO", "OK", "-", "|"
+        clean = re.sub(r"^(?:NO|\+|OK|\-|\*|\|)\s*", "", line).strip()
+        if not clean:
+            continue
+
+        # 1. Detect section start
+        if not in_gen_ed_section:
+            if header_re.search(clean):
+                in_gen_ed_section = True
+            continue
+
+        # 2. Section exit check
+        if exit_re.search(clean):
+            break
+
+        # 3. Match Gen Ed Category (Flexible search on stripped line)
+        matched_cat = False
+        for display_name, token_suffix in KNOWN_GENED_CATEGORIES:
+            # Check if category name is present in this line
+            pattern = r"\b" + re.escape(display_name) + r"\b"
+            if re.search(pattern, clean, re.IGNORECASE):
+                # Avoid matching the introductory legend list ('AR' ARTS, 'HU' HUMANITIES...)
+                if "'" not in clean and "COURSES DESIGNATED" not in clean.upper():
+                    current_category_name = display_name
+                    current_category_token = f"GENED:{token_suffix}"
+                    matched_cat = True
+                    break
+
+        if matched_cat:
+            continue
+
+        # 4. Detect "Needs: X Course" under the current category
+        needs_match = needs_re.search(clean)
+        if needs_match and current_category_token:
+            needed_count = int(needs_match.group(1))
+
+            # Guard against duplicate additions if already recorded
+            if not any(g.units[0].raw_token == current_category_token for g in gen_ed_groups):
+                gen_ed_groups.append(
+                    RequirementGroup(
+                        group_name=current_category_name,
+                        courses_needed=needed_count,
+                        units=[CourseUnit.from_token(current_category_token)]
+                    )
+                )
+
+            # Reset state for next category
+            current_category_token = None
+            current_category_name = None
+
+    return gen_ed_groups
+
 #-----------------------------------------------------------------
 # Builds results based on the models
 #-----------------------------------------------------------------
@@ -296,6 +375,7 @@ def build_audit_result(all_lines: list) -> DegreeAuditResult:
 
     requirement_groups: list[RequirementGroup] = []
 
+    # 1. Standard Major / Program Requirements
     for idx, block in enumerate(raw_blocks, start=1):
         if not block:
             continue
@@ -303,7 +383,6 @@ def build_audit_result(all_lines: list) -> DegreeAuditResult:
         needed = block[0] if has_count else 1
         raw_candidates = block[1:] if has_count else block
 
-        # Parse tokens into CourseUnit objects and filter completed ones immediately
         active_units = []
         for token in raw_candidates:
             unit = CourseUnit.from_token(str(token))
@@ -319,8 +398,12 @@ def build_audit_result(all_lines: list) -> DegreeAuditResult:
                 )
             )
 
+    # 2. Scanned Gen Ed Distribution Requirements
+    gened_groups = gen_ed_scan(all_lines)
+
     return DegreeAuditResult(
         completed_courses=completed,
         earned_credits=earned,
-        requirements=requirement_groups
+        requirements=requirement_groups,
+        gen_ed_requirements=gened_groups
     )

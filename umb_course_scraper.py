@@ -9,10 +9,8 @@ from playwright.async_api import async_playwright
 
 #-----------------------------------------------------------------
 # Descriptions:
-#
 # - Scans the UMB course listings using their website: https://online.umb.edu/courses/
 # - Saves the courses and their data as JSON file for now, and will implement to connect with SupaBase later
-# - Created with Gemini Flash 3.8 using agentic engineering
 #
 # Require to run these following commands for this script to work:
 #
@@ -22,7 +20,7 @@ from playwright.async_api import async_playwright
 # How to use it:
 # Type "python UMB_course_scraper.py" to run and press "Ctrl + C" to end it early
 #
-# Developed with assistance from Google Gemini Flash 3.8 using agentic workflows
+# Developed with assistance from Google Gemini using agentic workflows
 #-----------------------------------------------------------------
 
 BASE_URL = "https://online.umb.edu/courses/"    # The website where it scans for courses
