@@ -2,3 +2,4 @@ flask
 gunicorn
 pdfplumber
 supabase
+python-dotenv
