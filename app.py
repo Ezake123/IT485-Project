@@ -72,14 +72,29 @@ def prereq_text_for(course_obj) -> str:
             return raw
     return "None"
 
-def prereqs_met_for(course_id: str, catalog: CatalogManager, completed_set, earned_credits) -> bool:
+# The scraper only keeps course codes from prerequisite text, so wording like
+# "or permission of instructor", "placement into MATH 140" or "or equivalent"
+# gets lost. When the text has an alternative like that, an unmet course list
+# isn't proof the student can't enroll, so we flag it for review instead.
+PREREQ_ALTERNATIVE_RE = re.compile(
+    r"permission|consent|approval|instructor|placement|aleks|score|equivalent|"
+    r"or higher|may not register|class note|see note|department",
+    re.IGNORECASE,
+)
+
+def prereq_status(course_id: str, catalog: CatalogManager, completed_set, earned_credits) -> str:
+    """Returns 'met', 'review' (unclear, schedule but warn) or 'unmet' (skip)."""
     course_obj = catalog.get_course(course_id)
     if not course_obj:
-        return True  # Nothing to check against
+        return "met"  # Nothing to check against
     try:
-        return course_obj.prerequisites_met(completed_set, earned_credits)
+        if course_obj.prerequisites_met(completed_set, earned_credits):
+            return "met"
     except Exception:
-        return True  # Malformed prerequisite data shouldn't block scheduling
+        return "met"  # Malformed prerequisite data shouldn't block scheduling
+    if PREREQ_ALTERNATIVE_RE.search(prereq_text_for(course_obj)):
+        return "review"
+    return "unmet"
 
 #-----------------------------------------------------------------
 # Extracts unique offered courses from serialized requirements
@@ -171,7 +186,8 @@ def handle_file_too_large(e):
         target_course_count = 5,
         ignore_capacity=False,
         ignore_prereqs=False,
-        warnings=[]
+        warnings=[],
+        no_schedule_reason=None
     ), 413
 
 #-----------------------------------------------------------------
@@ -403,7 +419,11 @@ def index():
     target_course_count = 5
     ignore_capacity = False
     ignore_prereqs = False
-    warnings = []
+    warnings = []          # Each item: {"msg": str, "courses": [str, ...]}
+    no_schedule_reason = None
+
+    def add_warning(msg, items=None):
+        warnings.append({"msg": msg, "courses": items or []})
 
     catalog = None
     try:
@@ -502,7 +522,10 @@ def index():
                 has_audit = bool(completed_set) or earned_credits > 0
                 check_prereqs = has_audit and not ignore_prereqs
                 if not has_audit and not ignore_prereqs:
-                    warnings.append("Prerequisites weren't checked because no degree audit was scanned. Confirm you meet them before registering.")
+                    add_warning("Prerequisites weren't checked because no degree audit was scanned. Confirm you meet them before registering.")
+
+                # Courses whose prerequisites are unclear; scheduled, but flagged afterwards
+                review_ids = set()
 
                 # 2. Rebuild Section instances for locked selections
                 locked_sec_objs = []
@@ -522,13 +545,10 @@ def index():
                         locked_sec_objs.append(matched)
                         # Locked sections are the student's explicit choice, so keep them,
                         # but say so if they don't meet the prerequisites.
-                        if check_prereqs and not prereqs_met_for(course_id, catalog, completed_set, earned_credits):
-                            warnings.append(
-                                f"Locked {matched.course_name} {matched.course_number}: your audit doesn't show its prerequisites "
-                                f"({prereq_text_for(catalog.get_course(course_id))})."
-                            )
+                        if check_prereqs and prereq_status(course_id, catalog, completed_set, earned_credits) != "met":
+                            review_ids.add(course_id)
                     else:
-                        warnings.append(
+                        add_warning(
                             f"Locked section #{s_data.get('class_code')} for {c_data.get('subject_code')} {c_data.get('course_number')} "
                             f"is no longer offered and was left out."
                         )
@@ -539,7 +559,7 @@ def index():
                     for j in range(i + 1, len(locked_sec_objs)):
                         a, b = locked_sec_objs[i], locked_sec_objs[j]
                         if scheduler.intervals_collide(a.days, a.start_time, a.end_time, b.days, b.start_time, b.end_time):
-                            warnings.append(
+                            add_warning(
                                 f"Time conflict: your locked sections {a.course_name} {a.course_number} (Sec {a.section}) and "
                                 f"{b.course_name} {b.course_number} (Sec {b.section}) overlap. Unlock one and generate again."
                             )
@@ -559,11 +579,14 @@ def index():
                     for c in candidate_courses:
                         token = f"{c['subject_code']}{c['course_number']}".replace(" ", "").upper()
                         if token not in locked_course_ids:
-                            if check_prereqs and not prereqs_met_for(token, catalog, completed_set, earned_credits):
+                            status = prereq_status(token, catalog, completed_set, earned_credits) if check_prereqs else "met"
+                            if status == "unmet":
                                 prereq_skipped.append(
-                                    f"{c['subject_code']} {c['course_number']} ({prereq_text_for(catalog.get_course(token))})"
+                                    f"{c['subject_code']} {c['course_number']}: {prereq_text_for(catalog.get_course(token))}"
                                 )
                                 continue
+                            if status == "review":
+                                review_ids.add(token)
                             unit = CourseUnit.from_token(token)
                             if catalog.get_sections(token) or catalog.get_sections(f"{c['subject_code']} {c['course_number']}"):
                                 valid_reqs.append(
@@ -581,12 +604,11 @@ def index():
                             unit = CourseUnit.from_token(token)
                             if check_prereqs:
                                 # Keep only the courses in this unit the student is eligible for
-                                eligible = [cid for cid in unit.courses if prereqs_met_for(cid, catalog, completed_set, earned_credits)]
-                                if unit.unit_type == "AND" and len(eligible) < len(unit.courses):
-                                    prereq_skipped.append(token)
-                                    continue
-                                if not eligible:
-                                    prereq_skipped.append(token)
+                                statuses = {cid: prereq_status(cid, catalog, completed_set, earned_credits) for cid in unit.courses}
+                                eligible = [cid for cid in unit.courses if statuses[cid] != "unmet"]
+                                review_ids.update(cid for cid in eligible if statuses[cid] == "review")
+                                if (unit.unit_type == "AND" and len(eligible) < len(unit.courses)) or not eligible:
+                                    prereq_skipped.append(f"{token}: {prereq_text_for(catalog.get_course(unit.courses[0]))}")
                                     continue
                                 unit.courses = eligible
                             units.append(unit)
@@ -602,12 +624,21 @@ def index():
                     valid_reqs = course_validator.validate_requirements(reconstructed_reqs, catalog)
 
                 if prereq_skipped:
-                    warnings.append(
-                        "Skipped because your audit doesn't show the prerequisites: " + "; ".join(prereq_skipped)
-                        + ". Check \"Ignore prerequisite checks\" if you have permission or they're in progress."
+                    add_warning(
+                        f"{len(prereq_skipped)} course(s) skipped because your audit doesn't show their prerequisites. "
+                        "Check \"Ignore prerequisite checks\" if you have permission or one is in progress.",
+                        prereq_skipped
                     )
+
+                # Explain an empty result with the actual cause instead of a generic message
                 if pool_submitted and not candidate_courses and not locked_sections:
-                    warnings.append("Your course pool is empty. Add courses from the search below, then generate again.")
+                    no_schedule_reason = "Your course pool is empty. Add courses from the search below, then generate again."
+                elif not valid_reqs and not locked_sec_objs:
+                    if prereq_skipped:
+                        no_schedule_reason = ("Every course in your pool was skipped for prerequisites (listed above). "
+                                              "Add other courses from the search below, or check \"Ignore prerequisite checks\".")
+                    else:
+                        no_schedule_reason = "None of the courses in your pool have sections offered this term."
 
                 # 4. Total target courses wanted (e.g. 5). The solver fills up to this total using locked + pool.
                 raw_schedule = scheduler.solve_schedule(
@@ -668,6 +699,19 @@ def index():
                         })
                     schedule_json = json.dumps(calendar_entries)
 
+                    flagged = []
+                    for sec in raw_schedule:
+                        cid = normalize_course_id(sec.course_id)
+                        label = f"{sec.course_name} {sec.course_number}: {prereq_text_for(catalog.get_course(cid))}"
+                        if cid in review_ids and label not in flagged:
+                            flagged.append(label)
+                    if flagged:
+                        add_warning(
+                            "Double-check these prerequisites. Your audit doesn't list the required courses, but the course "
+                            "allows other ways in (permission, placement, or an equivalent course).",
+                            flagged
+                        )
+
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -720,7 +764,8 @@ def index():
         target_course_count=target_course_count,
         ignore_capacity=ignore_capacity,
         ignore_prereqs=ignore_prereqs,
-        warnings=warnings
+        warnings=warnings,
+        no_schedule_reason=no_schedule_reason
     )
 
 if __name__ == "__main__":

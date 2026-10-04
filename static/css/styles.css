@@ -116,7 +116,18 @@ input[type="file"] {
 }
 
 .warning-line + .warning-line {
-    margin-top: 6px;
+    margin-top: 10px;
+}
+
+.warning-items {
+    margin: 6px 0 0 0;
+    padding-left: 22px;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.warning-items li + li {
+    margin-top: 3px;
 }
 
 /* Audit Breakdown Panel */
