@@ -2,17 +2,17 @@ import os
 import io
 import json
 import re
-from datetime import time
+from datetime import datetime, time
 from functools import lru_cache
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import pdfplumber
 from werkzeug.exceptions import RequestEntityTooLarge
-from models import CatalogManager, SchedulePreferences, CourseUnit, RequirementGroup, parse_time_value, GENED_TOKEN_MAP
+from models import CatalogManager, SchedulePreferences, CourseUnit, RequirementGroup, Section, parse_time_value, GENED_TOKEN_MAP
 import pdf_scanner
-import course_validator
 import scheduler
+from flask_compress import Compress
 
 #-----------------------------------------------------------------
 # Description:
@@ -32,6 +32,7 @@ import scheduler
 load_dotenv()
 
 app = Flask(__name__)
+Compress(app)
 
 # Enforce a 100 KB maximum upload limit since most degree audit can't even get over 50KB
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 
@@ -42,12 +43,31 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if (SUPABASE_URL and SUPABASE_KEY) else None
 
 #-----------------------------------------------------------------
+# Calculate the default semester, excludes winter and summer 
+#-----------------------------------------------------------------
+
+def get_default_term_info() -> tuple[str, int]:
+    now = datetime.now()
+    month = now.month
+    year = now.year
+
+    if month in (11, 12):
+        return "Spring", year + 1
+    elif month in (1, 2, 3):
+        return "Spring", year
+    else:
+        return "Fall", year
+
+#-----------------------------------------------------------------
 # Extracts unique offered courses from serialized requirements
 #-----------------------------------------------------------------
 
 def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
     seen_ids = set()
     candidate_list = []
+
+    def format_sections_payload(raw_secs):
+        return [s.to_dict() for s in raw_secs]
 
     for req in serialized_reqs:
         for unit_token in req.get("units", []):
@@ -67,7 +87,8 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
                                     "course_number": course.course_number.strip(),
                                     "name": getattr(course, "description", None) or f"{course.course_name} {course.course_number}",
                                     "credits": sections[0].credits if sections else 3,
-                                    "sections_count": len(sections)
+                                    "sections_count": len(sections),
+                                    "sections": format_sections_payload(sections)
                                 })
                 continue
 
@@ -96,7 +117,8 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
                             "course_number": raw_cnum,
                             "name": getattr(course_obj, "description", raw_cname) or raw_cname,
                             "credits": credits_val,
-                            "sections_count": len(sections)
+                            "sections_count": len(sections),
+                            "sections": format_sections_payload(sections)
                         })
 
     candidate_list.sort(key=lambda c: (c["subject_code"], c["course_number"]))
@@ -108,13 +130,21 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
 
 @app.errorhandler(RequestEntityTooLarge)
 def handle_file_too_large(e):
+    def_season, def_year = get_default_term_info()
     return render_template(
         "index.html",
+        selected_season=def_season,
+        selected_year=def_year,
+        selected_term=f"{def_season} {def_year}",
         completed_courses=[],
         completed_courses_json="[]",
         required_courses=[],
+        manual_choice_requirements=[],
+        serialized_gen_eds_json="[]",
         candidate_courses=[],           
         serialized_reqs_json="[]",
+        locked_sections=[],
+        locked_sections_json="[]",
         earned_credits=0.0,
         schedule=None,
         schedule_json="[]",
@@ -124,20 +154,62 @@ def handle_file_too_large(e):
         selected_days=["Mo", "Tu", "We", "Th", "Fr"],
         start_time_val="03:00",
         end_time_val="23:59",
-        target_course_count = 5,
+        target_course_count=5,
         ignore_capacity=False
     ), 413
 
 #-----------------------------------------------------------------
-# Finds courses by term/semester
+# Verifies if the course is in the database or offered for the term
 #-----------------------------------------------------------------
 
-@lru_cache(maxsize=4)
-def load_catalog_for_term(term: str = "Fall 2026") -> CatalogManager:
+def is_unit_offered(unit: CourseUnit, catalog: CatalogManager) -> bool:
+    if unit.unit_type == "AND":
+        return all(catalog.get_course(c) and len(catalog.get_sections(c)) > 0 for c in unit.courses)
+    if unit.unit_type == "OR":
+        return any(catalog.get_course(c) and len(catalog.get_sections(c)) > 0 for c in unit.courses)
+    c = unit.courses[0]
+    has_course = catalog.get_course(c) is not None
+    has_sections = len(catalog.get_sections(c)) > 0
+    return has_course and has_sections
+
+#-----------------------------------------------------------------
+# Checks requirement groups and filters out courses not offered
+#-----------------------------------------------------------------
+
+def validate_requirements(
+    requirements: list[RequirementGroup],
+    catalog: CatalogManager
+) -> list[RequirementGroup]:
+    valid_groups = []
+
+    for group in requirements:
+        offered_units = [u for u in group.units if is_unit_offered(u, catalog)]
+        if offered_units:
+            valid_groups.append(
+                RequirementGroup(
+                    group_name=group.group_name,
+                    courses_needed=min(group.courses_needed, len(offered_units)),
+                    units=offered_units
+                )
+            )
+
+    return valid_groups
+
+#-----------------------------------------------------------------
+# Finds courses by term/semester (Resilient Fallback)
+#-----------------------------------------------------------------
+
+@lru_cache(maxsize=8)
+def load_catalog_for_term(term: str = None) -> CatalogManager:
     if not supabase:
         raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY in environment or .env file.")
 
-    print(f"[*] Querying Supabase catalog for term: {term}...")
+    def_season, def_year = get_default_term_info()
+    if not term:
+        term = f"{def_season} {def_year}"
+
+    clean_term = term.strip()
+    print(f"[*] Querying Supabase catalog for term: '{clean_term}'...")
     
     # 1. Fetch all courses (paginated to avoid 1,000 row cap)
     all_courses = []
@@ -150,24 +222,61 @@ def load_catalog_for_term(term: str = "Fall 2026") -> CatalogManager:
             break
         page += 1
 
-    # 2. Fetch all sections for the term (paginated across 1,000+ rows)
-    all_sections = []
-    page = 0
-    while True:
-        res = (
-            supabase.table("course_sections")
-            .select("*")
-            .ilike("term", f"%{term.strip()}%")  # Case-insensitive partial match to handle whitespace/formatting
-            .range(page * page_size, (page + 1) * page_size - 1)
-            .execute()
-        )
-        all_sections.extend(res.data)
-        if len(res.data) < page_size:
-            break
-        page += 1
+    # 2. Fetch sections with flexible matching ("Fall 2026", "2026 Fall", "FA26")
+    def fetch_sections_for_tag(target_tag: str):
+        parts = target_tag.strip().split()
+        sections = []
+        p = 0
 
-    print(f"[+] Loaded {len(all_courses)} courses and {len(all_sections)} sections into memory.")
+        # Construct filter query
+        while True:
+            query = supabase.table("course_sections").select("*")
+            if len(parts) == 2:
+                s_name, s_year = parts[0], parts[1]
+                # Match both "Fall 2026" and "2026 Fall"
+                query = query.or_(f"term.ilike.%{s_name}%{s_year}%,term.ilike.%{s_year}%{s_name}%")
+            else:
+                query = query.ilike("term", f"%{target_tag.strip()}%")
+
+            res = query.range(p * page_size, (p + 1) * page_size - 1).execute()
+            sections.extend(res.data)
+            if len(res.data) < page_size:
+                break
+            p += 1
+        return sections
+
+    # Target the requested term directly
+    all_sections = fetch_sections_for_tag(clean_term)
+
+    print(f"[+] Loaded {len(all_courses)} courses and {len(all_sections)} sections into memory for '{clean_term}'.")
     return CatalogManager.load_from_supabase_data(all_courses, all_sections)
+
+    print(f"[+] Loaded {len(all_courses)} courses and {len(all_sections)} sections into memory for '{clean_term}'.")
+    return CatalogManager.load_from_supabase_data(all_courses, all_sections)
+
+# -------------------------------------------------------------
+# PRE-WARM CATALOG CACHE AT SERVER STARTUP
+# -------------------------------------------------------------
+if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
+    with app.app_context():
+        def_season_init, def_year_init = get_default_term_info()
+        default_term_init = f"{def_season_init} {def_year_init}"
+        for attempt in range(3):
+            try:
+                load_catalog_for_term(default_term_init)
+                print(f"[✓] Supabase catalog pre-warmed successfully for {default_term_init}.")
+                break
+            except Exception as e:
+                print(f"[!] Warning: Catalog attempt {attempt + 1} failed: {e}")
+                if attempt == 2:
+                    print("[x] Running in fallback mode; will retry on first request.")
+
+#-----------------------------------------------------------------
+# Lightweight Health Check Endpoint (Keep-Alive for Render)
+#-----------------------------------------------------------------
+@app.route("/healthz", methods=["GET"])
+def health_check():
+    return "OK", 200
 
 #-----------------------------------------------------------------
 # Fast Course Search Endpoint (Name and Number Strict Match)
@@ -177,24 +286,30 @@ def load_catalog_for_term(term: str = "Fall 2026") -> CatalogManager:
 def search_all_courses():
     query = request.args.get("q", "").strip().lower()
     geneds_param = request.args.get("geneds", "").strip()
+    term_param = request.args.get("term", "").strip()
     selected_geneds = [g.strip().lower() for g in geneds_param.split(",") if g.strip()]
 
-    # If neither query text nor Gen Ed filters are supplied, return empty
     if not query and not selected_geneds:
         return jsonify([])
 
-    catalog = load_catalog_for_term("Fall 2026")
+    def_season, def_year = get_default_term_info()
+    term = term_param if term_param else f"{def_season} {def_year}"
+    catalog = load_catalog_for_term(term)
     results = []
     query_compact = query.replace(" ", "")
 
-    for course_id, course in catalog.courses.items():
+    dept_match = re.match(r"^([a-z]+)", query_compact)
+    potential_dept = dept_match.group(1).upper() if dept_match else None
+
+    search_pool = catalog.dept_index.get(potential_dept, catalog.courses.values()) if potential_dept in catalog.dept_index else catalog.courses.values()
+
+    for course in search_pool:
         dept = course.course_name.strip()
         num = course.course_number.strip()
         full_spaced = f"{dept} {num}".lower()
         full_compact = f"{dept}{num}".lower()
         course_gened = (course.gen_ed or "").strip().lower()
 
-        # 1. Text filter check (if user typed something)
         text_match = True
         if query:
             text_match = (
@@ -204,18 +319,13 @@ def search_all_courses():
                 (query == num.lower())
             )
 
-        # 2. Gen Ed filter check (if user checked any Gen Ed boxes)
         gened_match = True
         if selected_geneds:
             gened_match = any(target in course_gened for target in selected_geneds)
 
-        # Must satisfy both criteria
         if text_match and gened_match:
-            sections = catalog.get_sections(f"{dept}{num}")
-            if not sections:
-                sections = catalog.get_sections(f"{dept} {num}")
-
-            credits_val = sections[0].credits if (sections and hasattr(sections[0], "credits") and sections[0].credits > 0) else 3
+            secs = getattr(course, "sections", [])
+            credits_val = secs[0].credits if (secs and hasattr(secs[0], "credits") and secs[0].credits > 0) else 3
 
             results.append({
                 "code": f"{dept} {num}",
@@ -225,10 +335,10 @@ def search_all_courses():
                 "description": course.description or "No description available.",
                 "gen_ed": course.gen_ed or "None",
                 "credits": credits_val,
-                "sections_count": len(sections),
+                "sections_count": len(secs),
                 "prereqs": "None"
             })
-            if len(results) >= 300:
+            if len(results) >= 60:
                 break
 
     return jsonify(results)
@@ -241,18 +351,18 @@ def search_all_courses():
 def get_course_sections_detail():
     course_name = request.args.get("name", "").strip()
     course_number = request.args.get("number", "").strip()
+    term_param = request.args.get("term", "").strip()
     if not course_name or not course_number:
         return jsonify({"error": "Missing course identifier"}), 400
 
-    catalog = load_catalog_for_term("Fall 2026")
+    def_season, def_year = get_default_term_info()
+    term = term_param if term_param else f"{def_season} {def_year}"
+    catalog = load_catalog_for_term(term)
+
     course_id = f"{course_name}{course_number}"
     course_obj = catalog.get_course(course_id)
     raw_sections = catalog.get_sections(course_id)
 
-    if not raw_sections:
-        raw_sections = catalog.get_sections(f"{course_name} {course_number}")
-
-    # Extract prerequisite text safely
     raw_prereq_source = course_obj.prerequisites if course_obj else None
     prereq_text = "None"
     if raw_prereq_source:
@@ -270,7 +380,7 @@ def get_course_sections_detail():
         sections_payload.append({
             "class_code": s.class_code,
             "section": s.section,
-            "term": s.term or "Fall 2026",
+            "term": s.term or term,
             "credits": s.credits,
             "days": s.days or [],
             "start_time": s.formatted_start_time,
@@ -283,7 +393,6 @@ def get_course_sections_detail():
             "is_full": s.is_full
         })
 
-    # Sort sections in natural sequence (e.g. 01, 02, 01D, 02D)
     sections_payload.sort(key=lambda x: x["section"])
 
     return jsonify({
@@ -335,6 +444,13 @@ def parse_audit_pdf(file_stream):
 
 @app.route("/", methods=["GET", "POST"])
 def index():
+    def_season, def_year = get_default_term_info()
+
+    # Prioritize user selections across POST, GET query params, and auto-defaults
+    selected_season = request.form.get("selected_season") or request.args.get("season") or def_season
+    selected_year = request.form.get("selected_year") or request.args.get("year") or str(def_year)
+    selected_term = f"{selected_season} {selected_year}"
+
     completed_courses = []
     earned_credits = 0.0
     serialized_reqs = []
@@ -350,7 +466,6 @@ def index():
     is_scanned = False
     is_generated = False
 
-    # Default restriction settings matching the UI defaults
     selected_days = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
     start_time_val = "00:00"
     end_time_val = "24:00"
@@ -359,22 +474,23 @@ def index():
 
     catalog = None
     try:
-        catalog = load_catalog_for_term("Fall 2026")
+        catalog = load_catalog_for_term(selected_term)
     except Exception as e:
-        print(f"Warning: Could not pre-load catalog: {e}")
+        print(f"Warning: Could not load catalog for {selected_term}: {e}")
 
-    # Check for manual mode trigger on GET request
     if request.method == "GET" and request.args.get("manual") == "true":
         is_scanned = True
-        # Keep completed_courses and serialized_reqs empty so the breakdown panel is suppressed
 
     if request.method == "POST":
         action = request.form.get("action", "")
 
+        if action == "manual":
+            is_scanned = True
+
         # -------------------------------------------------------------
-        # STEP 1: SCAN AUDIT ONLY (No schedule generated yet)
+        # STEP 1: SCAN AUDIT ONLY
         # -------------------------------------------------------------
-        if action == "scan":
+        elif action == "scan":
             file = request.files.get("audit_pdf")
             if file and file.filename.endswith(".pdf"):
                 try:
@@ -383,7 +499,6 @@ def index():
                     is_scanned = True
 
                     if catalog:
-                        # Only pre-load major / degree requirements into the pool (No Gen Eds)
                         candidate_courses = get_candidate_courses_pool(serialized_reqs, catalog)
 
                 except Exception as e:
@@ -403,13 +518,20 @@ def index():
             raw_gen_eds_json = request.form.get("serialized_gen_eds_json", "[]")
             serialized_gen_eds = json.loads(raw_gen_eds_json)
 
-            # 1. Preserve and unpack locked sections
             raw_locked_json = request.form.get("locked_sections_json", "[]")
-            locked_sections_json = raw_locked_json
             try:
-                locked_sections = json.loads(raw_locked_json)
+                parsed_locked = json.loads(raw_locked_json)
+                seen_codes = set()
+                locked_sections = []
+                for item in parsed_locked:
+                    s_code = str(item.get("section", {}).get("class_code", ""))
+                    if s_code and s_code not in seen_codes:
+                        seen_codes.add(s_code)
+                        locked_sections.append(item)
+                locked_sections_json = json.dumps(locked_sections)
             except Exception:
                 locked_sections = []
+                locked_sections_json = "[]"
 
             try:
                 serialized_reqs = json.loads(raw_reqs_json)
@@ -438,22 +560,60 @@ def index():
                 if not candidate_courses and catalog:
                     candidate_courses = get_candidate_courses_pool(serialized_reqs, catalog)
 
-                # 2. Rebuild Section instances for locked selections
+                if catalog and candidate_courses:
+                    for c in candidate_courses:
+                        if "sections" not in c or not c["sections"]:
+                            cid = f"{c.get('subject_code', '')}{c.get('course_number', '')}"
+                            c["sections"] = [s.to_dict() for s in catalog.get_sections(cid)]
+
                 locked_sec_objs = []
                 locked_course_ids = set()
+                custom_card_metadata = {}
+
                 for item in locked_sections:
                     s_data = item.get("section", {})
                     c_data = item.get("course", {})
-                    course_id = f"{c_data.get('subject_code')}{c_data.get('course_number')}".replace(" ", "").upper()
-                    locked_course_ids.add(course_id)
-                    
-                    catalog_sections = catalog.get_sections(course_id)
-                    if not catalog_sections:
-                        catalog_sections = catalog.get_sections(f"{c_data.get('subject_code')} {c_data.get('course_number')}")
+                    class_code_str = str(s_data.get("class_code", ""))
+                    is_custom = item.get("is_custom", False) or class_code_str.startswith("CUST-")
 
-                    matched = next((s for s in catalog_sections if str(s.class_code) == str(s_data.get("class_code"))), None)
-                    if matched:
-                        locked_sec_objs.append(matched)
+                    dept_val = str(c_data.get("subject_code", "CUSTOM")).strip()
+                    num_val = str(c_data.get("course_number", "1")).strip()
+                    course_id = f"{dept_val}{num_val}".replace(" ", "").upper()
+
+                    if is_custom:
+                        locked_course_ids.add(course_id)
+                    else:
+                        cat_secs = catalog.get_sections(course_id) or catalog.get_sections(f"{dept_val} {num_val}")
+                        has_discussions = any(scheduler.is_discussion_section(s) for s in cat_secs)
+                        if not has_discussions:
+                            locked_course_ids.add(course_id)
+
+                    if is_custom:
+                        custom_sec = Section(
+                            class_code=class_code_str,
+                            course_name=dept_val,
+                            course_number=num_val,
+                            section=str(s_data.get("section", "01")),
+                            days=s_data.get("days") or [],
+                            start_time=parse_time_value(s_data.get("start_time")),
+                            end_time=parse_time_value(s_data.get("end_time")),
+                            location="Self-Enrolled (WISER)",
+                            maximum_capacity=999,
+                            enrolled=0,
+                            instructors=["Custom Instructor"],
+                            term=selected_term,
+                            credits=int(c_data.get("credits", 3))
+                        )
+                        locked_sec_objs.append(custom_sec)
+                        custom_card_metadata[custom_sec.class_code] = True
+                    else:
+                        catalog_sections = catalog.get_sections(course_id)
+                        if not catalog_sections:
+                            catalog_sections = catalog.get_sections(f"{dept_val} {num_val}")
+
+                        matched = next((s for s in catalog_sections if str(s.class_code) == class_code_str), None)
+                        if matched:
+                            locked_sec_objs.append(matched)
 
                 prefs = SchedulePreferences(
                     earliest_start=parse_time_value(start_time_val),
@@ -463,21 +623,53 @@ def index():
                     ignore_capacity=ignore_capacity
                 )
 
-                # 3. Build requirement groups for pool courses (excluding locked courses)
-                valid_reqs = []
+                priority_reqs = []
+                pool_reqs = []
+
+                locked_course_map = {}
+                for s in locked_sec_objs:
+                    c_tag = f"{s.course_name.strip()}{s.course_number.strip()}".upper()
+                    if c_tag not in locked_course_map:
+                        locked_course_map[c_tag] = {"sections": [], "dept": s.course_name.strip(), "num": s.course_number.strip()}
+                    locked_course_map[c_tag]["sections"].append(s)
+
+                for c_tag, data in locked_course_map.items():
+                    cat_secs = catalog.get_sections(c_tag) or catalog.get_sections(f"{data['dept']} {data['num']}")
+                    has_disc_in_catalog = any(scheduler.is_discussion_section(s) for s in cat_secs)
+
+                    if has_disc_in_catalog:
+                        held_secs = data["sections"]
+                        has_l = any(not scheduler.is_discussion_section(s) for s in held_secs)
+                        has_d = any(scheduler.is_discussion_section(s) for s in held_secs)
+
+                        if (has_l and not has_d) or (has_d and not has_l):
+                            missing_comp = "Discussion" if has_l else "Lecture"
+                            # Explicitly tag the token so scheduler only picks the missing component
+                            comp_token = f"{c_tag}:DISC_ONLY" if has_l else f"{c_tag}:LEC_ONLY"
+                            unit = CourseUnit.from_token(comp_token)
+                            priority_reqs.append(
+                                RequirementGroup(
+                                    group_name=f"{data['dept']} {data['num']} (Required {missing_comp})",
+                                    courses_needed=1,
+                                    units=[unit]
+                                )
+                            )
+
                 if candidate_courses:
                     for c in candidate_courses:
                         token = f"{c['subject_code']}{c['course_number']}".replace(" ", "").upper()
-                        if token not in locked_course_ids:
-                            unit = CourseUnit.from_token(token)
-                            if catalog.get_sections(token) or catalog.get_sections(f"{c['subject_code']} {c['course_number']}"):
-                                valid_reqs.append(
-                                    RequirementGroup(
-                                        group_name=f"{c['subject_code']} {c['course_number']}",
-                                        courses_needed=1,
-                                        units=[unit]
-                                    )
+                        if token in locked_course_map or token in locked_course_ids:
+                            continue
+
+                        unit = CourseUnit.from_token(token)
+                        if catalog.get_sections(token) or catalog.get_sections(f"{c['subject_code']} {c['course_number']}"):
+                            pool_reqs.append(
+                                RequirementGroup(
+                                    group_name=f"{c['subject_code']} {c['course_number']}",
+                                    courses_needed=1,
+                                    units=[unit]
                                 )
+                            )
                 else:
                     reconstructed_reqs = []
                     for item in serialized_reqs:
@@ -489,9 +681,10 @@ def index():
                                 units=units
                             )
                         )
-                    valid_reqs = course_validator.validate_requirements(reconstructed_reqs, catalog)
+                    pool_reqs = validate_requirements(reconstructed_reqs, catalog)
 
-                # 4. Total target courses wanted (e.g. 5). The solver fills up to this total using locked + pool.
+                valid_reqs = priority_reqs + pool_reqs
+
                 raw_schedule = scheduler.solve_schedule(
                     requirements=valid_reqs,
                     catalog=catalog,
@@ -503,40 +696,59 @@ def index():
                 schedule = []
                 if raw_schedule:
                     for sec in raw_schedule:
-                        # Fetch catalog metadata for description, gen_ed, and prerequisites
-                        course_meta = catalog.get_course(sec.course_id)
+                        is_custom_course = custom_card_metadata.get(sec.class_code, False) or str(sec.class_code).startswith("CUST-")
 
-                        # Extract prerequisites text safely
-                        raw_prereq_source = course_meta.prerequisites if course_meta else None
-                        prereq_text = "None"
-                        if raw_prereq_source:
-                            if isinstance(raw_prereq_source, dict):
-                                prereq_text = raw_prereq_source.get("raw") or "None"
-                            elif isinstance(raw_prereq_source, str):
-                                try:
-                                    parsed = json.loads(raw_prereq_source)
-                                    prereq_text = parsed.get("raw", raw_prereq_source) if isinstance(parsed, dict) else raw_prereq_source
-                                except Exception:
-                                    prereq_text = raw_prereq_source
+                        if is_custom_course:
+                            schedule.append({
+                                "class_code": sec.class_code,
+                                "course_name": sec.course_name,
+                                "course_number": sec.course_number,
+                                "section": sec.section,
+                                "location": "Self-Enrolled",
+                                "instructors": ["N/A"],
+                                "days": sec.days or [],
+                                "formatted_start_time": sec.formatted_start_time,
+                                "formatted_end_time": sec.formatted_end_time,
+                                "is_online": sec.is_online,
+                                "credits": sec.credits,
+                                "gen_ed": "None",
+                                "description": "Custom user-added course.",
+                                "raw_prerequisites": "None",
+                                "is_custom": True
+                            })
+                        else:
+                            course_meta = catalog.get_course(sec.course_id)
+                            
+                            prereq_text = "None"
+                            if course_meta and getattr(course_meta, "prerequisites", None):
+                                raw_prereq_source = course_meta.prerequisites
+                                if isinstance(raw_prereq_source, dict):
+                                    prereq_text = raw_prereq_source.get("raw") or "None"
+                                elif isinstance(raw_prereq_source, str):
+                                    try:
+                                        parsed = json.loads(raw_prereq_source)
+                                        prereq_text = parsed.get("raw", raw_prereq_source) if isinstance(parsed, dict) else raw_prereq_source
+                                    except Exception:
+                                        prereq_text = raw_prereq_source
 
-                        schedule.append({
-                            "class_code": sec.class_code,
-                            "course_name": sec.course_name,
-                            "course_number": sec.course_number,
-                            "section": sec.section,
-                            "location": sec.location or ("Online Asynchronous" if sec.is_online else "Room TBA"),
-                            "instructors": sec.instructors or ["TBA"],
-                            "days": sec.days or [],
-                            "formatted_start_time": sec.formatted_start_time,
-                            "formatted_end_time": sec.formatted_end_time,
-                            "is_online": sec.is_online,
-                            "credits": sec.credits,  # <-- USE sec.credits DIRECTLY (Do not use course_meta.credits)
-                            "gen_ed": course_meta.gen_ed if (course_meta and course_meta.gen_ed) else "None",
-                            "description": course_meta.description if (course_meta and course_meta.description) else "No description available.",
-                            "raw_prerequisites": prereq_text
-                        })
+                            schedule.append({
+                                "class_code": sec.class_code,
+                                "course_name": sec.course_name,
+                                "course_number": sec.course_number,
+                                "section": sec.section,
+                                "location": sec.location or ("Online Asynchronous" if sec.is_online else "Room TBA"),
+                                "instructors": sec.instructors or ["TBA"],
+                                "days": sec.days or [],
+                                "formatted_start_time": sec.formatted_start_time,
+                                "formatted_end_time": sec.formatted_end_time,
+                                "is_online": sec.is_online,
+                                "credits": sec.credits,
+                                "gen_ed": course_meta.gen_ed if (course_meta and course_meta.gen_ed) else "None",
+                                "description": course_meta.description if (course_meta and course_meta.description) else "No description available.",
+                                "raw_prerequisites": prereq_text,
+                                "is_custom": False
+                            })
 
-                    # Form calendar payload for weekly grid
                     calendar_entries = []
                     for sec in raw_schedule:
                         calendar_entries.append({
@@ -555,36 +767,59 @@ def index():
                 traceback.print_exc()
                 error_msg = f"Failed to generate schedule: {str(e)}"
 
-    # Format requirement units for Jinja display
-    for req in serialized_reqs:
-        display_required.append({
-            "needed": req["courses_needed"],
-            "options": req["units"]
-        })
+    def is_wildcard_token(tok: str) -> bool:
+        clean = tok.strip()
+        if re.search(r'^[A-Za-z]+\s*\d+-\d+', clean):
+            return True
+        if re.match(r'^[A-Za-z]+\s*[1-5](xx)?$', clean, re.IGNORECASE):
+            return True
+        return False
 
-    # Format gen ed units for Jinja display with clean database names
+    display_required = []
+    manual_choice_requirements = []
+
+    for req in serialized_reqs:
+        units = req.get("units", [])
+        needed = req.get("courses_needed", 1)
+
+        wildcards = [u for u in units if is_wildcard_token(u)]
+
+        if wildcards:
+            display_title = " or ".join(units)
+            manual_choice_requirements.append({
+                "group_name": display_title,
+                "needed": needed,
+                "is_gened": False
+            })
+        else:
+            display_required.append({
+                "needed": needed,
+                "options": units
+            })
+
     for req in serialized_gen_eds:
-        formatted_options = []
+        clean_name = req.get("group_name", "General Education").replace("Gen Ed: ", "").strip()
         for token in req.get("units", []):
             if isinstance(token, str) and token.startswith("GENED:"):
                 raw_tag = token.split("GENED:", 1)[1].strip()
                 clean_name = GENED_TOKEN_MAP.get(raw_tag, raw_tag.replace("_", " ").title())
-                formatted_options.append(clean_name)
-            else:
-                formatted_options.append(str(token))
+                break
 
-        display_gen_eds.append({
-            "group_name": req.get("group_name", "General Education"),
+        manual_choice_requirements.append({
+            "group_name": clean_name,
             "needed": req.get("courses_needed", 1),
-            "options": formatted_options
+            "is_gened": True
         })
 
     return render_template(
         "index.html",
+        selected_season=selected_season,
+        selected_year=int(selected_year),
+        selected_term=selected_term,
         completed_courses=completed_courses,
         completed_courses_json=json.dumps(completed_courses),
         required_courses=display_required,
-        gen_ed_requirements=display_gen_eds,
+        manual_choice_requirements=manual_choice_requirements,
         serialized_gen_eds_json=json.dumps(serialized_gen_eds),
         candidate_courses=candidate_courses,
         serialized_reqs_json=json.dumps(serialized_reqs),

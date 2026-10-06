@@ -268,24 +268,6 @@ def normalize_uncounted_requirements(required_courses):
         
     return normalized
 
-#-----------------------------------------------------------------
-# Special case to removes completed courses inside required courses
-# Usually caused by having a completed course counted into another 
-# section of the degree audit
-#-----------------------------------------------------------------
-
-def is_course_completed(course_token, completed_set):
-    if "&" in course_token:
-        parts = course_token.split("&")
-        return all(p in completed_set for p in parts)
-    
-    if "|" in course_token:
-        parts = course_token.split("|")
-        return any(p in completed_set for p in parts)
-        
-    return course_token in completed_set
-
-
 # -----------------------------------------------------------------
 # Scans specifically for General Education distribution requirements
 # -----------------------------------------------------------------
