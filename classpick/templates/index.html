@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UMass Boston Course Schedule Planner</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎓</text></svg>">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=3.7">
+</head>
+<body>
+
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>Degree Audit Schedule Optimizer</h1>
+                <p class="subtitle">Upload your UMass Boston degree audit PDF to scan requirements, set preferences, and solve your semester schedule.</p>
+            </div>
+            {% if is_scanned or schedule %}
+                <a href="{{ url_for('index') }}" class="btn-clear-all" title="Clear all courses and start over">
+                    🗑 Clear All
+                </a>
+            {% endif %}
+        </div>
+
+        {% if error_msg %}
+            <div class="alert-error">{{ error_msg }}</div>
+        {% endif %}
+
+        {% if term_notice %}
+            <div class="alert-warning">{{ term_notice }}</div>
+        {% endif %}
+
+        {% if is_generated and not schedule and not error_msg %}
+            <div class="alert-warning">
+                <strong>No valid schedule combinations found.</strong><br>
+                {% if no_schedule_reason %}
+                    {{ no_schedule_reason }}
+                {% else %}
+                    The solver could not find courses meeting all selected days and time restrictions. Try broadening your allowed hours or adding more days.
+                {% endif %}
+            </div>
+        {% endif %}
+
+        <!-- Notes from the last schedule build (prerequisites, conflicts, missing sections) -->
+        {% for w in warnings %}
+            <div class="alert-warning">
+                {% if w.courses %}
+                    <details class="warning-details">
+                        <summary>⚠️ {{ w.msg }} <span class="warning-show">Show</span></summary>
+                        <ul class="warning-items">
+                            {% for item in w.courses %}
+                                <li>{{ item }}</li>
+                            {% endfor %}
+                        </ul>
+                        <div class="warning-hint">Have permission or a prerequisite in progress? Check "Ignore prerequisite checks" below and solve again.</div>
+                    </details>
+                {% else %}
+                    ⚠️ {{ w.msg }}
+                {% endif %}
+            </div>
+        {% endfor %}
+
+        <!-- STEP 1: PDF SCANNING OR MANUAL ENTRY -->
+        {% if not is_scanned %}
+            <form id="uploadForm" method="POST" enctype="multipart/form-data" class="upload-form">
+                <input type="hidden" id="formActionInput" name="action" value="scan">
+                <div class="drop-zone" id="dropZone" role="button" tabindex="0" aria-label="Upload Degree Audit PDF">
+                    <div class="drop-zone-icon">📄</div>
+                    <div class="drop-zone-text">Click or drag & drop your degree audit PDF here</div>
+                    <div class="selected-file-name" id="fileName"></div>
+                    <input type="file" id="auditInput" name="audit_pdf" accept="application/pdf" aria-label="Degree Audit PDF File Input">
+                </div>
+
+                <!-- Semester Season and Year Selection -->
+                <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+                    <div style="flex: 1;">
+                        <label for="initialSeasonSelect" class="form-label">Semester Season:</label>
+                        <select id="initialSeasonSelect" name="selected_season" class="section-select-dropdown" style="margin-top: 0; padding: 8px;">
+                            <option value="Fall" {% if selected_season == 'Fall' %}selected{% endif %}>Fall</option>
+                            <option value="Spring" {% if selected_season == 'Spring' %}selected{% endif %}>Spring</option>
+                            <option value="Summer" {% if selected_season == 'Summer' %}selected{% endif %}>Summer</option>
+                            <option value="Winter" {% if selected_season == 'Winter' %}selected{% endif %}>Winter</option>
+                        </select>
+                    </div>
+                    <div style="flex: 1;">
+                        <label for="initialYearSelect" class="form-label">Year:</label>
+                        <select id="initialYearSelect" name="selected_year" class="section-select-dropdown" style="margin-top: 0; padding: 8px;">
+                            {% for yr in [2026, 2027, 2028, 2029, 2030] %}
+                                <option value="{{ yr }}" {% if selected_year|int == yr %}selected{% endif %}>{{ yr }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-btn-stack">
+                    <button type="submit" class="btn-primary" onclick="document.getElementById('formActionInput').value='scan';">Scan Degree Audit</button>
+                    <button type="submit" class="btn-manual-entry" onclick="document.getElementById('formActionInput').value='manual'; document.getElementById('auditInput').required=false;">
+                        Build Schedule Manually (Without Degree Audit)
+                    </button>
+                </div>
+            </form>
+        {% endif %}
+
+        {% if is_scanned %}
+            <!-- 1. AUDIT BREAKDOWN PANEL -->
+            {% if completed_courses or required_courses or manual_choice_requirements %}
+                <div class="audit-panel">
+                    <div class="audit-header">
+                        <span>📋 Scanned Degree Audit Breakdown</span>
+                        <span class="audit-earned-credits">Earned Credits: {{ earned_credits }}</span>
+                    </div>
+
+                    <div class="audit-grid">
+                        <div class="audit-column">
+                            <div class="audit-col-title">
+                                <span>Completed Courses</span>
+                                <span>{{ completed_courses|length }}</span>
+                            </div>
+                            <div class="tag-list">
+                                {% for c in completed_courses %}
+                                    <span class="course-tag completed">{{ c }}</span>
+                                {% else %}
+                                    <span class="empty-muted-text">No completed courses scanned.</span>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="audit-column">
+                            <div class="audit-col-title">
+                                <span>Remaining Requirements</span>
+                                <span>{{ required_courses|length }} Groups</span>
+                            </div>
+                            {% for req in required_courses %}
+                                <div class="req-item">
+                                    Need <span class="req-needed">{{ req.needed }}</span> from:
+                                    <div class="tag-list tag-list-spaced">
+                                        {% for opt in req.options %}
+                                            <span class="course-tag">{{ opt }}</span>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            {% else %}
+                                <span class="empty-muted-text">No remaining unfulfilled requirements scanned.</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <!-- Dedicated General Education & Course Elective Requirements Box -->
+                    <div class="gened-audit-box">
+                        <div class="gened-audit-header">
+                            <span>🎓 General Education and Courses Requirements Needed</span>
+                            <span class="box-count">{{ manual_choice_requirements|length }} Remaining</span>
+                        </div>
+
+                        <div class="gened-audit-notice">
+                            ℹ️ <strong>Reminder:</strong> General Education and elective requirement choices are not added automatically. Please use the <strong>Search All University Courses</strong> filter below to search, select, and add your preferred courses to the generator pool.
+                        </div>
+
+                        <div class="gened-audit-grid">
+                            {% for item in manual_choice_requirements %}
+                                <div class="gened-card-item">
+                                    <div class="gened-card-title">
+                                        {{ item.group_name }}
+                                    </div>
+                                    <div class="gened-card-needed">
+                                        Needs <strong>{{ item.needed }}</strong> course{{ 's' if item.needed > 1 else '' }}
+                                    </div>
+                                </div>
+                            {% else %}
+                                <div class="empty-gened-text">
+                                    All General Education and elective requirements appear satisfied.
+                                </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+
+            <!-- 2. COURSE DISCOVERY: FULL CATALOG SEARCH DIRECTLY UNDER AUDIT BREAKDOWN -->
+            <div class="candidate-pool-panel panel-gold-border">
+                <div class="candidate-header-row header-wrap">
+                    <div class="candidate-title">
+                        <span>🔎 Search All University Courses</span>
+                        <span class="box-count" id="catalogResultCount">0 Found</span>
+                    </div>
+
+                    <div class="search-bar-cluster">
+                        <!-- Custom Multi-Select Gen Ed Dropdown -->
+                        <div class="gened-dropdown-wrapper">
+                            <button type="button" class="gened-dropdown-btn" id="genEdDropdownBtn" onclick="toggleGenEdDropdown(event)">
+                                <span>🎓 Gen Ed (<span id="genEdSelectedCount">0</span>)</span>
+                                <span class="caret-indicator">▼</span>
+                            </button>
+                            <div class="gened-dropdown-menu" id="genEdDropdownMenu">
+                                <label class="gened-item">
+                                    <input type="checkbox" class="gened-checkbox" value="Humanities" onchange="onGenEdChange()">
+                                    Humanities
+                                </label>
+                                <label class="gened-item">
+                                    <input type="checkbox" class="gened-checkbox" value="Mathematics and Technology" onchange="onGenEdChange()">
+                                    Mathematics and Technology
+                                </label>
+                                <label class="gened-item">
+                                    <input type="checkbox" class="gened-checkbox" value="Natural Sciences" onchange="onGenEdChange()">
+                                    Natural Sciences
+                                </label>
+                                <label class="gened-item">
+                                    <input type="checkbox" class="gened-checkbox" value="Social & Behavioral Sciences" onchange="onGenEdChange()">
+                                    Social & Behavioral Sciences
+                                </label>
+                                <label class="gened-item">
+                                    <input type="checkbox" class="gened-checkbox" value="The Arts" onchange="onGenEdChange()">
+                                    The Arts
+                                </label>
+                                <label class="gened-item">
+                                    <input type="checkbox" class="gened-checkbox" value="World Cultures" onchange="onGenEdChange()">
+                                    World Cultures
+                                </label>
+                                <label class="gened-item">
+                                    <input type="checkbox" class="gened-checkbox" value="World Languages" onchange="onGenEdChange()">
+                                    World Languages
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Course Text Input -->
+                        <div class="search-box-wrapper search-box-fixed">
+                            <span class="search-icon-badge">🔍</span>
+                            <input type="text" id="catalogLiveSearch" class="candidate-search-input" placeholder="Course name or number (e.g. CS 240, IT 444)..." aria-label="Course name or number filter">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Results Display -->
+                <div class="candidate-list candidate-list-scrollable" id="catalogResultsList">
+                    <div class="empty-placeholder empty-grid-span">
+                        Type a course name/number or select Gen Ed categories to view offerings.
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. ACTIVE WORKSPACE: ELIGIBLE GENERATOR COURSE POOL -->
+            <div class="candidate-pool-panel panel-top-spacing">
+                <div class="candidate-header-row">
+                    <div class="candidate-title">
+                        <span>🎯 Eligible Generator Course Pool</span>
+                        <span class="box-count" id="candidateCount">{{ candidate_courses|length if candidate_courses else 0 }} Courses</span>
+                        <button type="button" id="btnClearPool" class="btn-clear-pool" onclick="clearAllCandidateCourses()" title="Remove all courses from generator pool">
+                            🗑️ Clear Pool
+                        </button>
+                    </div>
+                    <div class="search-box-wrapper">
+                        <span class="search-icon-badge">🔍</span>
+                        <input type="text" id="candidateSearchInput" class="candidate-search-input" placeholder="Search pool by course name or number (e.g. IT 444, CHEM 115)..." aria-label="Search candidate course pool">
+                    </div>
+                </div>
+
+                <div class="candidate-list" id="candidateList">
+                    {% if candidate_courses %}
+                        {% for course in candidate_courses %}
+                            <div class="candidate-item-card" 
+                                id="candidate-card-{{ course.subject_code }}-{{ course.course_number }}"
+                                data-code="{{ course.subject_code }} {{ course.course_number }}" 
+                                data-dept="{{ course.subject_code }}"
+                                data-num="{{ course.course_number }}"
+                                data-name="{{ course.name }}"
+                                data-credits="{{ course.credits }}"
+                                data-sections="{{ course.sections_count or course.sections|length }}">
+                                <div class="card-header-flex">
+                                    <div class="candidate-code">{{ course.subject_code }} {{ course.course_number }}</div>
+                                    <div class="candidate-actions flex-align-center">
+                                        <button type="button" class="btn-details" onclick="openCourseModal('{{ course.subject_code }}', '{{ course.course_number }}')">Details</button>
+                                        <button type="button" class="btn-remove-pool" onclick="removeCourseFromPool('{{ course.subject_code }}', '{{ course.course_number }}')" title="Remove from generator pool">✕</button>
+                                    </div>
+                                </div>
+                                <div class="candidate-name" title="{{ course.name }}">{{ course.name }}</div>
+                                <div class="candidate-meta">
+                                    <span class="meta-pill pill-blue">{{ course.credits }} cr</span>
+                                </div>
+
+                                <select class="section-select-dropdown" 
+                                        id="section-select-{{ course.subject_code }}-{{ course.course_number }}" 
+                                        data-sections-json='{{ (course.sections | default([])) | tojson }}'
+                                        aria-label="Select section to lock"
+                                        onchange="handleSectionSelectChange(this, '{{ course.subject_code }}', '{{ course.course_number }}')">
+                                    {% if course.sections and course.sections|length > 0 %}
+                                        <option value="" selected disabled>Select section to lock in ({{ course.sections|length }})...</option>
+                                        {% for s in course.sections %}
+                                            {% set days_str = s.days|join('') if s.days else '' %}
+                                            {% set time_str = (s.start_time ~ ' - ' ~ s.end_time) if (s.start_time and s.start_time != 'TBA') else 'Asynchronous' %}
+                                            <option value="{{ loop.index0 }}">
+                                                Sec {{ s.section }}: {{ days_str ~ ' ' if days_str else '' }}{{ time_str }} (#{{ s.class_code }})
+                                            </option>
+                                        {% endfor %}
+                                    {% else %}
+                                        <option value="" disabled selected>No active sections</option>
+                                    {% endif %}
+                                </select>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty-placeholder empty-grid-span" id="emptyPoolMsg">
+                            No eligible courses in generator pool. Add courses below.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- 4. ACTIVE WORKSPACE: LOCKED-IN SECTIONS CONTAINER WITH INLINE ADD CUSTOM BUTTON -->
+            <div class="candidate-pool-panel panel-blue-border">
+                <div class="candidate-header-row header-wrap-between">
+                    <div class="candidate-title flex-align-gap">
+                        <span>🔒 Locked-in Sections</span>
+                        <span class="box-count" id="lockedCount">{{ locked_sections|length }} Locked</span>
+                    </div>
+                    <div>
+                        <button type="button" 
+                                id="btnOpenCustomModal"
+                                class="btn-add-custom-open" 
+                                onclick="openCustomModal()">
+                            <span>➕</span> Add Custom / Unlisted Section
+                        </button>
+                    </div>
+                </div>
+
+                <div class="candidate-list" id="lockedList">
+                    {% if locked_sections %}
+                        {% for item in locked_sections %}
+                            {% set is_cust = item.is_custom or (item.section and item.section.class_code and item.section.class_code.startswith('CUST-')) %}
+                            <div class="candidate-item-card locked-card" id="locked-card-{{ item.section.class_code }}">
+                                <div class="card-header-flex">
+                                    <div class="candidate-code">
+                                        {{ item.course.subject_code }} {{ item.course.course_number }} 
+                                        <span class="locked-badge-pill">Sec {{ item.section.section }}</span>
+                                    </div>
+                                    <div class="flex-align-center">
+                                        {% if is_cust %}
+                                            <button type="button" class="btn-details" onclick="openCustomModal('{{ item.section.class_code }}')">Edit</button>
+                                        {% else %}
+                                            <button type="button" class="btn-details" onclick="openCourseModal('{{ item.course.subject_code }}', '{{ item.course.course_number }}', '{{ item.section.section }}')">Details</button>
+                                        {% endif %}
+                                        <button type="button" class="btn-remove-pool" onclick="unlockSection('{{ item.section.class_code }}')" title="Unlock and return to course pool">✕</button>
+                                    </div>
+                                </div>
+                                <div class="candidate-name" title="{{ item.course.name }}">{{ item.course.name }}</div>
+                                <div class="candidate-meta meta-top-spacing">
+                                    <span>{{ item.section.days|join(', ') if item.section.days else 'Online' }} ({{ item.section.start_time }} - {{ item.section.end_time }})</span>
+                                    <span>#{{ item.section.class_code }}</span>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty-placeholder empty-grid-span" id="emptyLockedMsg">
+                            No locked sections. Select a section dropdown in your pool or use "Lock This Section" in Details.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Custom Section Popup Modal Overlay -->
+            <div id="customCourseModal" class="modal-overlay modal-hidden" onclick="closeCustomModal(event)">
+                <div class="modal-card modal-card-sm" onclick="event.stopPropagation()">
+                    <div class="modal-header">
+                        <div>
+                            <h2 id="customModalHeading" class="custom-modal-title">➕ Add Custom / Unlisted Section</h2>
+                            <span class="custom-modal-sub">Lock a manual course into your schedule generation</span>
+                        </div>
+                        <button type="button" class="btn-close-modal" id="btnCloseCustomCard" aria-label="Close modal">✕</button>
+                    </div>
+
+                    <div class="custom-modal-grid">
+                        <div>
+                            <label for="customDeptInput" class="custom-field-label">Subject (Optional)</label>
+                            <input type="text" id="customDeptInput" placeholder="e.g. CS" class="slider-text-box input-w-full text-left">
+                        </div>
+                        <div>
+                            <label for="customNumInput" class="custom-field-label">Number (Optional)</label>
+                            <input type="text" id="customNumInput" placeholder="1" class="slider-text-box input-w-full text-left">
+                        </div>
+                        <div>
+                            <label for="customStartTime" class="custom-field-label">Start Time</label>
+                            <input type="time" id="customStartTime" value="09:00" class="slider-text-box input-w-full">
+                        </div>
+                        <div>
+                            <label for="customEndTime" class="custom-field-label">End Time</label>
+                            <input type="time" id="customEndTime" value="10:15" class="slider-text-box input-w-full">
+                        </div>
+                    </div>
+
+                    <div class="custom-days-group">
+                        <span class="custom-field-label label-block-spaced">Meeting Days</span>
+                        <div class="custom-days-list">
+                            {% for day_code, day_name in [('Mo', 'Mon'), ('Tu', 'Tue'), ('We', 'Wed'), ('Th', 'Thu'), ('Fr', 'Fri'), ('Sa', 'Sat'), ('Su', 'Sun')] %}
+                                <label class="custom-day-pill">
+                                    <input type="checkbox" name="custom_days" value="{{ day_code }}"> {{ day_name }}
+                                </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="modal-actions-footer">
+                        <button type="button" class="btn-remove-pool btn-modal-cancel" id="btnCancelCustomCard">Cancel</button>
+                        <button type="button" class="btn-primary btn-modal-submit" id="btnSubmitCustomSection">Lock Custom Section</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. STEP 2: RESTRICTIONS & DUAL TIME SLIDERS/INPUTS -->
+            <form method="POST" class="restrictions-card">
+                <input type="hidden" name="action" value="generate">
+                <input type="hidden" name="serialized_reqs_json" value="{{ serialized_reqs_json }}">
+                <input type="hidden" name="serialized_gen_eds_json" value="{{ serialized_gen_eds_json|default('[]') }}">
+                <input type="hidden" name="completed_courses_json" value="{{ completed_courses_json }}">
+                <input type="hidden" name="earned_credits" value="{{ earned_credits }}">
+                <input type="hidden" id="selected_candidate_courses_json" name="selected_candidate_courses_json" value="">
+                <input type="hidden" id="locked_sections_json" name="locked_sections_json" value="{{ locked_sections_json|default('[]') }}">
+                <input type="hidden" id="formSelectedSeason" name="selected_season" value="{{ selected_season }}">
+                <input type="hidden" id="formSelectedYear" name="selected_year" value="{{ selected_year }}">
+
+                <div class="restrictions-title">⚙ Schedule Restrictions & Constraints</div>
+
+                <!-- 7 Day Checkboxes -->
+                <div class="form-row">
+                    <span class="form-label">Allowed Class Days:</span>
+                    <div class="days-group">
+                        {% set all_days = [('Mo', 'Monday'), ('Tu', 'Tuesday'), ('We', 'Wednesday'), ('Th', 'Thursday'), ('Fr', 'Friday'), ('Sa', 'Saturday'), ('Su', 'Sunday')] %}
+                        {% for day_code, day_name in all_days %}
+                            <label class="day-chip">
+                                <input type="checkbox" name="allowed_days" value="{{ day_code }}" {% if day_code in selected_days %}checked{% endif %}>
+                                {{ day_name }} ({{ day_code }})
+                            </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Dual Time Inputs (Pick or Type) -->
+                <div class="form-row">
+                    <div class="time-slider-container">
+                        <div class="time-control-box">
+                            <label for="start_text" class="form-label">Earliest Start Time:</label>
+                            <input type="time" id="start_text" name="earliest_start" class="slider-text-box input-w-full" value="{{ start_time_val or '03:00' }}">
+                        </div>
+
+                        <div class="time-control-box">
+                            <label for="end_text" class="form-label">Latest End Time:</label>
+                            <input type="time" id="end_text" name="latest_end" class="slider-text-box input-w-full" value="{{ '23:59' if (end_time_val == '24:00' or not end_time_val) else end_time_val }}">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Target Course Load Input & Combinatorial Search Warning -->
+                <div class="form-row">
+                    <label class="form-label" for="target_course_count">Target Number of Courses:</label>
+                    <div class="target-input-cluster">
+                        <input type="number" 
+                            id="target_course_count" 
+                            name="target_course_count" 
+                            min="1" 
+                            max="10" 
+                            value="{{ target_course_count or 5 }}" 
+                            class="time-text-input target-input-fixed">
+                        <span class="target-input-subtext">Default is 5 courses (typical full-time load).</span>
+                    </div>
+                    
+                    <div id="complexityWarning" class="alert-warning warning-margin-top" style="display: none;">
+                        ⚠️ <strong>Large Section Pool Detected (<span id="totalSectionCount">0</span> total sections):</strong> 
+                        Solving conflict-free combinations across this many sections and target course amount may take a few extra moments. Consider narrowing allowed days or hours to speed up calculation.
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <label class="checkbox-row">
+                        <input type="checkbox" name="ignore_capacity" value="true" {% if ignore_capacity %}checked{% endif %}>
+                        Ignore course capacity limits (allow full or waitlisted sections)
+                    </label>
+                    <label class="checkbox-row">
+                        <input type="checkbox" name="ignore_prereqs" value="true" {% if ignore_prereqs %}checked{% endif %}>
+                        Ignore prerequisite checks (if you have instructor permission or a prerequisite in progress)
+                    </label>
+                </div>
+                <button type="submit" class="btn-primary btn-submit-spacing">Solve & Generate Conflict-Free Schedule</button>
+            </form>
+        {% endif %}
+
+        <!-- 6. DYNAMIC WEEKLY TIMETABLE GRID -->
+        {% if schedule %}
+            <div class="timetable-section" id="timetableSection">
+                <div class="timetable-title">🗓️ Weekly Timetable ({{ selected_term }})</div>
+                <div class="timetable-container">
+                    <div class="timetable-header">Time</div>
+                    <div class="timetable-header">Monday</div>
+                    <div class="timetable-header">Tuesday</div>
+                    <div class="timetable-header">Wednesday</div>
+                    <div class="timetable-header">Thursday</div>
+                    <div class="timetable-header">Friday</div>
+                    <div class="timetable-header">Saturday</div>
+                    <div class="timetable-header">Sunday</div>
+
+                    <div class="time-labels" id="timeLabelsContainer"></div>
+
+                    <div class="day-column" id="col-Mo"></div>
+                    <div class="day-column" id="col-Tu"></div>
+                    <div class="day-column" id="col-We"></div>
+                    <div class="day-column" id="col-Th"></div>
+                    <div class="day-column" id="col-Fr"></div>
+                    <div class="day-column" id="col-Sa"></div>
+                    <div class="day-column" id="col-Su"></div>
+                </div>
+            </div>
+        {% endif %}
+
+        <!-- 7. SCHEDULED COURSES OUTPUT -->
+        {% if is_generated and schedule %}
+            <div class="course-box box-blue-top">
+                <div class="box-header">
+                    <span class="box-title">📚 Scheduled Courses ({{ selected_term }})</span>
+                    <span class="box-count">{{ schedule|length }} Selected</span>
+                </div>
+
+                <div class="schedule-review-banner">
+                    ⚠️ <strong>Please Review Your Schedule:</strong> Carefully verify each selected course, meeting times, and prerequisites against your academic roadmap before enrolling in WISER.
+                </div>
+
+                <div class="schedule-grid">
+                    {% for sec in schedule %}
+                        <div class="course-card-unified {% if sec.is_custom %}card-custom-active{% endif %}">
+                            <div class="course-main-info">
+                                <div class="course-title">
+                                    {{ sec.course_name }} {{ sec.course_number }} — Sec {{ sec.section }}
+                                    {% if sec.is_custom %}
+                                        <span class="locked-badge-pill pill-custom">Custom Section</span>
+                                    {% elif (sec.section|string|trim|upper).endswith('D') %}
+                                        <span class="locked-badge-pill pill-discussion">Discussion</span>
+                                    {% else %}
+                                        <span class="locked-badge-pill pill-lecture">Lecture</span>
+                                    {% endif %}
+                                    {% if sec.prereq_note %}
+                                        <span class="locked-badge-pill pill-prereq">Check prereq</span>
+                                    {% endif %}
+                                </div>
+                                {% if sec.prereq_note %}
+                                    <div class="prereq-note">{{ sec.prereq_note }}</div>
+                                {% endif %}
+
+                                {% if sec.is_custom %}
+                                    <div class="custom-course-callout">
+                                        📌 <strong>Unlisted / Custom Section:</strong> This section was manually added by you. Please make sure to search and enroll in this course directly in <strong>WISER</strong> by yourself.
+                                    </div>
+                                {% else %}
+                                    <div class="course-subtext">
+                                        Location: {{ sec.location }}<br>
+                                        Instructor: {{ sec.instructors|join(', ') }}
+                                    </div>
+
+                                    <div class="course-meta-tags">
+                                        <span class="meta-pill pill-blue">{{ sec.credits }} Credits</span>
+                                        <span class="meta-pill">Gen Ed: {{ sec.gen_ed }}</span>
+                                        <span class="meta-pill">Prereqs: {{ sec.raw_prerequisites }}</span>
+                                    </div>
+
+                                    <div class="course-desc">
+                                        {{ sec.description }}
+                                    </div>
+                                {% endif %}
+                            </div>
+
+                            <div class="course-actions-right">
+                                <div class="course-time-badge">
+                                    <div class="badge-days">{{ sec.days|join(', ') if sec.days else 'Online' }}</div>
+                                    <div>
+                                        {% if sec.formatted_start_time != 'TBA' and sec.formatted_end_time != 'TBA' %}
+                                            {{ sec.formatted_start_time }} - {{ sec.formatted_end_time }}
+                                        {% else %}
+                                            Asynchronous
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                {% if not sec.is_custom %}
+                                    <div class="course-action-buttons">
+                                        <button type="button" class="btn-copy-code copy-btn-full" onclick="copyClassCode(this, '{{ sec.class_code }}')" title="Copy Class # to clipboard">
+                                            <span>#{{ sec.class_code }}</span> 📋
+                                        </button>
+                                        <button type="button" class="btn-details-matched" onclick="openCourseModal('{{ sec.course_name }}', '{{ sec.course_number }}', '{{ sec.section }}')">
+                                            Details ℹ️
+                                        </button>
+                                    </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+    </div>
+
+    <script>
+        window.SERVER_SCHEDULE_DATA = {{ schedule_json | default('[]') | safe }};
+        window.ACTIVE_TERM = "{{ selected_term }}";
+    </script>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}?v=3.7"></script>
+
+    <!-- Course Section Details Modal -->
+    <div id="courseDetailsModal" class="modal-overlay modal-hidden" onclick="closeCourseModal(event)">
+        <div class="modal-card" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <div>
+                    <h2 id="modalCourseTitle" class="modal-course-title">Course Details</h2>
+                    <span id="modalCourseMeta" class="modal-course-meta">Loading details...</span>
+                </div>
+                <button type="button" class="btn-close-modal" onclick="closeCourseModal(event)" aria-label="Close details modal">✕</button>
+            </div>
+
+            <p id="modalCourseDesc" class="modal-desc"></p>
+
+            <div class="modal-tags-row">
+                <span class="meta-pill" id="modalCourseGenEd">Gen Ed: None</span>
+                <span class="meta-pill" id="modalCoursePrereq">Prereqs: None</span>
+            </div>
+
+            <hr class="modal-divider">
+
+            <div class="section-tabs-bar" id="modalSectionTabs"></div>
+            <div id="modalSectionContent" class="section-tab-content"></div>
+
+            <div class="modal-footer-flex">
+                <button type="button" id="btnModalLockSection" class="btn-primary btn-modal-lock" onclick="lockSectionFromModal()">
+                    🔒 Lock This Section
+                </button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

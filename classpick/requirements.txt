@@ -1,0 +1,6 @@
+flask
+gunicorn
+supabase
+pdfplumber
+python-dotenv
+flask-compress
