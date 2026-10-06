@@ -13,6 +13,7 @@ from supabase import create_client, Client
 # Requirement:
 # Need to run the following script and have the JSON file ready.
 #   pip install supabase
+#   pip install dotenv
 #
 # How to use it:
 # Type in the following command and add the name of the JSON file
@@ -21,6 +22,8 @@ from supabase import create_client, Client
 # script is made.
 #   python database_update.py YOUR_FILE.json
 #   python database_update.py
+#
+# Developed with assistance from Google Gemini Flash 3.8 using agentic workflows
 #--------------------------------------------------------------
 
 load_dotenv()
@@ -68,7 +71,6 @@ def upload_catalog_and_sections(file_path: str):
             course_map[key] = {
                 "course_name": r["course_name"],
                 "course_number": r["course_number"],
-                "credits": r.get("credits") or 0,
                 "description": r.get("description"),
                 "gen_ed": r.get("gen_ed"),
                 "prerequisites": r.get("prerequisites") or {}
@@ -96,6 +98,7 @@ def upload_catalog_and_sections(file_path: str):
             "course_number": r["course_number"],
             "section": str(r.get("section", "")),
             "term": term,
+            "credits": r.get("credits") or 0,          # <-- Added to upsert payload
             "days": r.get("days") or [],
             "start_time": r.get("start_time"),
             "end_time": r.get("end_time"),

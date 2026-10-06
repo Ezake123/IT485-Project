@@ -1,10 +1,17 @@
 import pdfplumber
 import re
+from models import CourseUnit, RequirementGroup, DegreeAuditResult, KNOWN_GENED_CATEGORIES
 
 #-----------------------------------------------------------------
+# Description:
 # Scans the pdf for courses and categorized them into either
 # completed/in-progress and required courses
-# Heavily modify with Gemini Flash 3.8
+#
+# Requirement:
+# Need to run the following script to get pdfplumber for this to work
+#   pip install pdfplumber
+# 
+# Developed with assistance from Google Gemini using agentic workflows
 #-----------------------------------------------------------------
 
 #-----------------------------------------------------------------
@@ -261,96 +268,124 @@ def normalize_uncounted_requirements(required_courses):
         
     return normalized
 
+# -----------------------------------------------------------------
+# Scans specifically for General Education distribution requirements
+# -----------------------------------------------------------------
+
+GENED_SECTION_HEADERS = [
+    r"GENERAL\s+EDUCATION\s+DISTRIBUTION",
+    r"AREAS\s+OF\s+KNOWLEDGE"
+]
+
+def gen_ed_scan(all_lines: list) -> list[RequirementGroup]:
+    gen_ed_groups = []
+    in_gen_ed_section = False
+    current_category_name = None
+    current_category_token = None
+
+    needs_re = re.compile(r"Needs:\s*(\d+)\s*(?:Courses?|Course|Sub-Reqs?|Sets?)", re.IGNORECASE)
+    header_re = re.compile(r"|".join(GENED_SECTION_HEADERS), re.IGNORECASE)
+
+    # Definite exit marker: Only exit when reaching the Major block or End of Audit
+    exit_re = re.compile(r"(^[A-Z\s]+MAJOR\s*\*{4,}|SUMMARY OF COURSES TAKEN|LEGEND\b)", re.IGNORECASE)
+
+    for raw_line in all_lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        # Strip audit status prefixes like "+", "NO", "OK", "-", "|"
+        clean = re.sub(r"^(?:NO|\+|OK|\-|\*|\|)\s*", "", line).strip()
+        if not clean:
+            continue
+
+        # 1. Detect section start
+        if not in_gen_ed_section:
+            if header_re.search(clean):
+                in_gen_ed_section = True
+            continue
+
+        # 2. Section exit check
+        if exit_re.search(clean):
+            break
+
+        # 3. Match Gen Ed Category (Flexible search on stripped line)
+        matched_cat = False
+        for display_name, token_suffix in KNOWN_GENED_CATEGORIES:
+            # Check if category name is present in this line
+            pattern = r"\b" + re.escape(display_name) + r"\b"
+            if re.search(pattern, clean, re.IGNORECASE):
+                # Avoid matching the introductory legend list ('AR' ARTS, 'HU' HUMANITIES...)
+                if "'" not in clean and "COURSES DESIGNATED" not in clean.upper():
+                    current_category_name = display_name
+                    current_category_token = f"GENED:{token_suffix}"
+                    matched_cat = True
+                    break
+
+        if matched_cat:
+            continue
+
+        # 4. Detect "Needs: X Course" under the current category
+        needs_match = needs_re.search(clean)
+        if needs_match and current_category_token:
+            needed_count = int(needs_match.group(1))
+
+            # Guard against duplicate additions if already recorded
+            if not any(g.units[0].raw_token == current_category_token for g in gen_ed_groups):
+                gen_ed_groups.append(
+                    RequirementGroup(
+                        group_name=current_category_name,
+                        courses_needed=needed_count,
+                        units=[CourseUnit.from_token(current_category_token)]
+                    )
+                )
+
+            # Reset state for next category
+            current_category_token = None
+            current_category_name = None
+
+    return gen_ed_groups
+
 #-----------------------------------------------------------------
-# Special case to removes completed courses inside required courses
-# Usually caused by having a completed course counted into another 
-# section of the degree audit
+# Builds results based on the models
 #-----------------------------------------------------------------
 
-def is_course_completed(course_token, completed_set):
-    if "&" in course_token:
-        parts = course_token.split("&")
-        return all(p in completed_set for p in parts)
-    
-    if "|" in course_token:
-        parts = course_token.split("|")
-        return any(p in completed_set for p in parts)
-        
-    return course_token in completed_set
+def build_audit_result(all_lines: list) -> DegreeAuditResult:
+    completed = set(complete_course_scan(all_lines))
+    earned = earned_credits_scan(all_lines)
+    raw_blocks = normalize_uncounted_requirements(required_course_scan(all_lines))
 
-#-----------------------------------------------------------------
-# There could be cases where a completed course is put into a
-# different section to count towards that requirement. 
-# 
-# Note: This edge case to figure out what courses is still needed
-# because of the wrongful placement of the completed course, is
-# out of the scope for this project.
-#-----------------------------------------------------------------
+    requirement_groups: list[RequirementGroup] = []
 
-def remove_completed(completed_courses, required_courses):
-    completed_set = set(completed_courses)
-    remaining_requirements = []
+    # 1. Standard Major / Program Requirements
+    for idx, block in enumerate(raw_blocks, start=1):
+        if not block:
+            continue
+        has_count = isinstance(block[0], int)
+        needed = block[0] if has_count else 1
+        raw_candidates = block[1:] if has_count else block
 
-    for req in required_courses:
-        has_count = isinstance(req[0], int)
-        count = req[0] if has_count else None
-        options = req[1:] if has_count else req
+        active_units = []
+        for token in raw_candidates:
+            unit = CourseUnit.from_token(str(token))
+            if not unit.is_completed(completed):
+                active_units.append(unit)
 
-        unfulfilled = []
-        for c in options:
-            if not is_course_completed(c, completed_set):
-                unfulfilled.append(c)
-
-        if unfulfilled:
-            if has_count:
-                remaining_requirements.append([count] + unfulfilled)
-            else:
-                remaining_requirements.append(unfulfilled)
-
-    return remaining_requirements
-
-#-----------------------------------------------------------------
-# Opens the pdf and extract the courses to their corresponding values 
-#-----------------------------------------------------------------
-
-def scan_pdf(pdf_path):
-    audit = []
-    with pdfplumber.open(pdf_path) as pdf:
-        total_pages = len(pdf.pages)
-        if total_pages > MAX_ALLOWED_PAGES:
-            raise ValueError(
-                f"Document has {total_pages} pages, exceeding the {MAX_ALLOWED_PAGES}-page limit."
+        if active_units:
+            requirement_groups.append(
+                RequirementGroup(
+                    group_name=f"Requirement {idx}",
+                    courses_needed=min(needed, len(active_units)),
+                    units=active_units
+                )
             )
 
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                audit.extend(page_text.splitlines())
+    # 2. Scanned Gen Ed Distribution Requirements
+    gened_groups = gen_ed_scan(all_lines)
 
-    completed_courses = complete_course_scan(audit)
-    required_courses = remove_completed(
-        completed_courses,
-        normalize_uncounted_requirements(required_course_scan(audit))
+    return DegreeAuditResult(
+        completed_courses=completed,
+        earned_credits=earned,
+        requirements=requirement_groups,
+        gen_ed_requirements=gened_groups
     )
-    earned_credits = earned_credits_scan(audit)
-
-    return completed_courses, required_courses, earned_credits, audit
-
-#-----------------------------------------------------------------
-# Testing
-#-----------------------------------------------------------------
-
-# completed_courses, required_courses, credit, audit = scan_pdf("audit1.pdf")
-
-# print("Credit:")
-# print(credit)
-
-# print()
-
-# print("Completed Courses:")
-# print(completed_courses)
-
-# print()
-
-# print("Required Courses:")
-# print(required_courses)
