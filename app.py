@@ -19,7 +19,14 @@ from flask_compress import Compress
 # Connects all the scripts and website together
 # 
 # Requirement:
-# Verify all other requirements in other scripts are satisfied
+# Verify if all these are installed:
+#   pip install Flask
+#   pip install gunicorn
+#   pip install supabase
+#   pip install pdfplumber
+#   pip install flask-compress
+#   pip install python-dotenv
+#   pip install werkzeug
 #
 # How to use it:
 # Type "python app.py" from the folder location, make sure you also

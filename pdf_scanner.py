@@ -280,6 +280,7 @@ GENED_SECTION_HEADERS = [
 def gen_ed_scan(all_lines: list) -> list[RequirementGroup]:
     gen_ed_groups = []
     in_gen_ed_section = False
+    past_world_cultures = False
     current_category_name = None
     current_category_token = None
 
@@ -288,11 +289,17 @@ def gen_ed_scan(all_lines: list) -> list[RequirementGroup]:
 
     # Definite exit marker: Only exit when reaching the Major block or End of Audit
     exit_re = re.compile(r"(^[A-Z\s]+MAJOR\s*\*{4,}|SUMMARY OF COURSES TAKEN|LEGEND\b)", re.IGNORECASE)
+    # Stop marker for 8 or more asterisks
+    divider_re = re.compile(r"\*{8,}")
 
     for raw_line in all_lines:
         line = raw_line.strip()
         if not line:
             continue
+
+        # Check for 8+ asterisks divider exit after World Cultures/Languages
+        if in_gen_ed_section and past_world_cultures and divider_re.search(line):
+            break
 
         # Strip audit status prefixes like "+", "NO", "OK", "-", "|"
         clean = re.sub(r"^(?:NO|\+|OK|\-|\*|\|)\s*", "", line).strip()
@@ -320,6 +327,10 @@ def gen_ed_scan(all_lines: list) -> list[RequirementGroup]:
                     current_category_name = display_name
                     current_category_token = f"GENED:{token_suffix}"
                     matched_cat = True
+
+                    # Flag that we have entered/passed the World Cultures/Languages requirement
+                    if "WORLD" in token_suffix:
+                        past_world_cultures = True
                     break
 
         if matched_cat:

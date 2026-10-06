@@ -32,6 +32,7 @@ GENED_TOKEN_MAP = {
 # Ordered list of (Audit Display Name, Token Suffix) used for PDF scanning
 KNOWN_GENED_CATEGORIES = [
     ("Social & Behavioral Sciences", "SOCIAL_AND_BEHAVIORAL_SCIENCES"),
+    ("Social and Behavioral Sciences", "SOCIAL_AND_BEHAVIORAL_SCIENCES"),
     ("World Languages or World Cultures", "WORLD_LANGUAGES_OR_WORLD_CULTURES"),
     ("World Languages", "WORLD_LANGUAGES"),
     ("World Cultures", "WORLD_CULTURES"),
