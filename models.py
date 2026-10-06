@@ -32,6 +32,7 @@ GENED_TOKEN_MAP = {
 # Ordered list of (Audit Display Name, Token Suffix) used for PDF scanning
 KNOWN_GENED_CATEGORIES = [
     ("Social & Behavioral Sciences", "SOCIAL_AND_BEHAVIORAL_SCIENCES"),
+    ("Social and Behavioral Sciences", "SOCIAL_AND_BEHAVIORAL_SCIENCES"),
     ("World Languages or World Cultures", "WORLD_LANGUAGES_OR_WORLD_CULTURES"),
     ("World Languages", "WORLD_LANGUAGES"),
     ("World Cultures", "WORLD_CULTURES"),
@@ -157,6 +158,16 @@ class Section:
         if not self.end_time:
             return "TBA"
         return self.end_time.strftime("%I:%M %p").lstrip("0")
+    
+    def to_dict(self) -> dict:
+        return {
+            "class_code": self.class_code,
+            "section": self.section,
+            "days": self.days or [],
+            "start_time": self.formatted_start_time,
+            "end_time": self.formatted_end_time,
+            "is_online": self.is_online
+        }
 
 @dataclass
 class Course:
@@ -166,6 +177,7 @@ class Course:
     gen_ed: Optional[str] = None                # e.g., 'Arts/Humanities' or None
     prerequisites: Dict[str, Any] = field(default_factory=dict)
     id: Optional[int] = None                    # Supabase ID
+    sections: List[Section] = field(default_factory=list)
 
     @property
     def course_id(self) -> str:
@@ -196,12 +208,6 @@ class Course:
                 return False
         return True
 
-@dataclass
-class Requirements:
-    requirement_name: str
-    courses_needed: int
-    candidate_courses: List[str]                # Can contain units like 'CHEM115&CHEM117' or 'BIOL210|BIOL212'
-
 #-----------------------------------------------------------------
 # Helper function to parse time vlaue from database
 #-----------------------------------------------------------------
@@ -228,7 +234,8 @@ def parse_time_value(val: Any) -> Optional[time]:
 class CatalogManager:
     def __init__(self):
         self.courses: Dict[str, Course] = {}                    
-        self.sections: Dict[str, List[Section]] = {}            
+        self.sections: Dict[str, List[Section]] = {}
+        self.dept_index: Dict[str, List[Course]] = {}           # Fast O(1) department index
 
     @staticmethod
     def _normalize_id(course_id: str) -> str:
@@ -238,11 +245,22 @@ class CatalogManager:
         norm_id = self._normalize_id(course.course_id)
         self.courses[norm_id] = course
 
+        # Index course under its uppercase subject code (e.g., 'CS', 'IT', 'MATH')
+        dept_key = course.course_name.strip().upper()
+        if dept_key not in self.dept_index:
+            self.dept_index[dept_key] = []
+        self.dept_index[dept_key].append(course)
+
     def add_section(self, section: Section):
         norm_id = self._normalize_id(section.course_id)
         if norm_id not in self.sections:
             self.sections[norm_id] = []
         self.sections[norm_id].append(section)
+        
+        # Link directly to course object for instant O(1) retrieval during search
+        course = self.courses.get(norm_id)
+        if course:
+            course.sections.append(section)
 
     def get_course(self, course_id: str) -> Optional[Course]:
         return self.courses.get(self._normalize_id(course_id))

@@ -17,8 +17,10 @@ import re
 # paired up with a lecture course
 #-----------------------------------------------------------------
 
-def is_discussion_section(sec: Section) -> bool:
-    return bool(sec.section and sec.section.strip().upper().endswith('D'))
+def is_discussion_section(section) -> bool:
+    """Checks if a section is a discussion section (ends with 'D', e.g., '01D', '02D')."""
+    sec_num = str(getattr(section, "section", "")).strip().upper()
+    return sec_num.endswith("D")
 
 #-----------------------------------------------------------------
 # Retrieves sections from the course, and bundles discussion with
@@ -31,9 +33,19 @@ def get_course_section_bundles(
     current_schedule: List[Section],
     preferences: Optional[SchedulePreferences]
 ) -> List[List[Section]]:
-    raw_sections = catalog.get_sections(course_id)
+    # 0. Extract explicit component filter if specified (e.g. "CS110:DISC_ONLY")
+    target_comp_filter = None
+    clean_id = course_id.strip()
+    if ":DISC_ONLY" in clean_id:
+        clean_id = clean_id.replace(":DISC_ONLY", "").strip()
+        target_comp_filter = "DISC"
+    elif ":LEC_ONLY" in clean_id:
+        clean_id = clean_id.replace(":LEC_ONLY", "").strip()
+        target_comp_filter = "LEC"
+
+    raw_sections = catalog.get_sections(clean_id)
     if not raw_sections:
-        match = re.match(r"^([A-Za-z]+)\s*(\d+[A-Za-z]?)$", course_id.strip())
+        match = re.match(r"^([A-Za-z]+)\s*(\d+[A-Za-z]?)$", clean_id)
         if match:
             alt_id = f"{match.group(1).upper()} {match.group(2).upper()}"
             raw_sections = catalog.get_sections(alt_id)
@@ -56,14 +68,36 @@ def get_course_section_bundles(
         lectures = [s for s in eligible if not is_discussion_section(s)]
         discussions = [s for s in eligible if is_discussion_section(s)]
 
-        # Must have at least one lecture and one discussion available
+        # If explicitly tagged, return only that component
+        if target_comp_filter == "DISC":
+            return [[disc] for disc in discussions]
+        if target_comp_filter == "LEC":
+            return [[lec] for lec in lectures]
+
+        # Check if one part is already present in current_schedule (e.g. locked)
+        c_clean = clean_id.replace(" ", "").upper()
+        sched_this_course = [
+            s for s in current_schedule 
+            if f"{s.course_name}{s.course_number}".replace(" ", "").upper() == c_clean
+        ]
+        has_sched_lec = any(not is_discussion_section(s) for s in sched_this_course)
+        has_sched_disc = any(is_discussion_section(s) for s in sched_this_course)
+
+        # Case A: Already has locked lecture -> only bundle eligible discussions
+        if has_sched_lec and not has_sched_disc:
+            return [[disc] for disc in discussions]
+
+        # Case B: Already has locked discussion -> only bundle eligible lectures
+        if has_sched_disc and not has_sched_lec:
+            return [[lec] for lec in lectures]
+
+        # Case C: Neither is locked -> must pair lecture with discussion
         if not lectures or not discussions:
             return []
 
         paired_bundles = []
         for lec in lectures:
             for disc in discussions:
-                # Ensure the lecture and discussion do not collide with each other
                 if not intervals_collide(lec.days, lec.start_time, lec.end_time,
                                          disc.days, disc.start_time, disc.end_time):
                     paired_bundles.append([lec, disc])
@@ -215,6 +249,13 @@ def get_compatible_unit_options(
     return get_course_section_bundles(single_id, catalog, current_schedule, preferences)
 
 #-----------------------------------------------------------------
+# Counts courses, treating "CS110_LEC" and "CS110_DISC" as one course
+#-----------------------------------------------------------------
+
+def count_distinct_courses(tags: Set[str]) -> int:
+    return len({re.sub(r'_(LEC|DISC)$', '', tag) for tag in tags})
+
+#-----------------------------------------------------------------
 # Calculate and generate a schedule that fits with the requirements
 # and incorporates any locked-in fixed sections
 #-----------------------------------------------------------------
@@ -228,15 +269,27 @@ def solve_schedule(
 ) -> Optional[List[Section]]:
     # Pre-seed with user locked sections
     seed_schedule: List[Section] = list(fixed_sections) if fixed_sections else []
-    seed_enrolled: Set[str] = {f"{s.course_name.strip()}{s.course_number.strip()}".upper() for s in seed_schedule}
+    
+    # Track component-specific tokens so a locked Lecture doesn't block its Discussion companion
+    seed_enrolled: Set[str] = set()
+    for s in seed_schedule:
+        c_tag = f"{s.course_name.strip()}{s.course_number.strip()}".upper()
+        # If this course offers discussions in the catalog, distinguish the token by component
+        cat_secs = catalog.get_sections(c_tag) or catalog.get_sections(f"{s.course_name.strip()} {s.course_number.strip()}")
+        if any(is_discussion_section(sec) for sec in cat_secs):
+            comp_tag = f"{c_tag}_DISC" if is_discussion_section(s) else f"{c_tag}_LEC"
+            seed_enrolled.add(comp_tag)
+        else:
+            seed_enrolled.add(c_tag)
 
-    # If already at or above target, or no other requirements to solve, return locked items
-    if not requirements or len(seed_schedule) >= target_count:
+    # If already at or above target, or no other requirements to solve, return locked items.
+    # Counts distinct courses, so a lecture + discussion pair counts as one course.
+    if not requirements or count_distinct_courses(seed_enrolled) >= target_count:
         return seed_schedule if seed_schedule else None
 
     effective_target = target_count
     best_schedule: List[Section] = list(seed_schedule)
-    best_course_count = len(seed_enrolled)
+    best_course_count = count_distinct_courses(seed_enrolled)
 
     MAX_SEARCH_ITERATIONS = 120000
     iterations = 0
@@ -254,13 +307,14 @@ def solve_schedule(
         if iterations > MAX_SEARCH_ITERATIONS:
             return best_schedule if best_schedule else None
 
-        current_count = len(active_enrolled)
+        # Distinct course count (stripping _LEC and _DISC suffixes)
+        current_distinct_count = count_distinct_courses(active_enrolled)
 
-        if current_count > best_course_count:
-            best_course_count = current_count
+        if current_distinct_count > best_course_count:
+            best_course_count = current_distinct_count
             best_schedule = list(active_sched)
 
-        if current_count >= effective_target:
+        if current_distinct_count >= effective_target:
             return active_sched
 
         if req_idx >= len(requirements):
@@ -279,24 +333,60 @@ def solve_schedule(
         unit = candidates[cand_idx]
         unit_courses = [c.upper() for c in unit.courses]
 
-        if any(c in active_enrolled for c in unit_courses):
-            return backtrack(req_idx, cand_idx + 1, remaining_needed_in_req, active_sched, active_enrolled)
+        sample_raw = unit_courses[0] if unit_courses else ""
+        is_disc_req = ":DISC_ONLY" in sample_raw
+        is_lec_req = ":LEC_ONLY" in sample_raw
+        sample_id = re.sub(r':(DISC_ONLY|LEC_ONLY)$', '', sample_raw)
+
+        cat_secs = catalog.get_sections(sample_id) or catalog.get_sections(re.sub(r'([A-Z]+)(\d+)', r'\1 \2', sample_id))
+        has_disc = any(is_discussion_section(s) for s in cat_secs)
+
+        if has_disc:
+            lec_tag = f"{sample_id}_LEC"
+            disc_tag = f"{sample_id}_DISC"
+            if is_disc_req:
+                if disc_tag in active_enrolled:
+                    return backtrack(req_idx, cand_idx + 1, remaining_needed_in_req, active_sched, active_enrolled)
+            elif is_lec_req:
+                if lec_tag in active_enrolled:
+                    return backtrack(req_idx, cand_idx + 1, remaining_needed_in_req, active_sched, active_enrolled)
+            else:
+                if lec_tag in active_enrolled and disc_tag in active_enrolled:
+                    return backtrack(req_idx, cand_idx + 1, remaining_needed_in_req, active_sched, active_enrolled)
+        else:
+            if any(re.sub(r':(DISC_ONLY|LEC_ONLY)$', '', c) in active_enrolled for c in unit_courses):
+                return backtrack(req_idx, cand_idx + 1, remaining_needed_in_req, active_sched, active_enrolled)
 
         section_options = get_compatible_unit_options(unit, catalog, active_sched, preferences)
 
         for sec_group in section_options:
-            new_sched = list(active_sched) + sec_group
-            new_enrolled = set(active_enrolled).union(unit_courses)
+            # Build component tags to track
+            added_tags = []
+            for added_sec in sec_group:
+                c_clean = f"{added_sec.course_name.strip()}{added_sec.course_number.strip()}".upper()
+                if has_disc:
+                    sub_tag = f"{c_clean}_DISC" if is_discussion_section(added_sec) else f"{c_clean}_LEC"
+                    added_tags.append(sub_tag)
+                else:
+                    added_tags.append(c_clean)
+
+            # 1. Push onto working stack (O(1) in-place mutation)
+            active_sched.extend(sec_group)
+            active_enrolled.update(added_tags)
 
             result = backtrack(
                 req_idx=req_idx,
                 cand_idx=cand_idx + 1,
                 remaining_needed_in_req=remaining_needed_in_req - 1,
-                active_sched=new_sched,
-                active_enrolled=new_enrolled
+                active_sched=active_sched,
+                active_enrolled=active_enrolled
             )
             if result is not None:
                 return result
+
+            # 2. Backtrack: Pop off working stack (O(1) in-place reversal)
+            del active_sched[-len(sec_group):]
+            active_enrolled.difference_update(added_tags)
 
         return backtrack(
             req_idx=req_idx,

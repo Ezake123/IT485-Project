@@ -1,5 +1,6 @@
 flask
 gunicorn
-pdfplumber
 supabase
+pdfplumber
 python-dotenv
+flask-compress
