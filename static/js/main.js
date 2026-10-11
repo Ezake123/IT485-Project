@@ -12,9 +12,7 @@ window.candidatePool = candidatePool;
 window.lockedSections = lockedSections;
 window.customCourseCounter = customCourseCounter;
 
-// Dynamic active term retrieval from initial page state
 function getActiveTerm() {
-    //Known good term
     return window.ACTIVE_TERM || "Fall 2026";
 }
 
@@ -163,8 +161,35 @@ function verifyPoolComplexity() {
 }
 
 // =================================================================
-// 3. CANDIDATE POOL & LOCKED SECTIONS MANAGEMENT
+// 3. GROUPED CANDIDATE POOL & LOCKED SECTIONS MANAGEMENT
 // =================================================================
+function getSectionKey(sec) {
+    const code = String(sec.class_code || '');
+    const term = String(sec.term || getActiveTerm()).replace(/\s+/g, '_');
+    return `${code}_${term}`;
+}
+
+function getGroupNeededMap() {
+    const groupNeeded = {};
+    if (Array.isArray(window.SERIALIZED_REQS)) {
+        window.SERIALIZED_REQS.forEach((req, idx) => {
+            const gid = `req-${String(idx + 1).padStart(2, '0')}`;
+            groupNeeded[gid] = parseInt(req.courses_needed, 10) || 1;
+        });
+    }
+    return groupNeeded;
+}
+
+function countLockedDistinctForGroup(gid) {
+    const distinct = new Set();
+    lockedSections.forEach(ls => {
+        if (ls.course && (ls.course.req_id === gid)) {
+            distinct.add(`${ls.course.subject_code}${ls.course.course_number}`.toUpperCase());
+        }
+    });
+    return distinct.size;
+}
+
 function renderLockedCard(course, section) {
     const emptyLocked = document.getElementById('emptyLockedMsg');
     if (emptyLocked) emptyLocked.remove();
@@ -172,7 +197,8 @@ function renderLockedCard(course, section) {
     const lockedList = document.getElementById('lockedList');
     if (!lockedList) return;
 
-    const cardId = `locked-card-${section.class_code}`;
+    const secKey = getSectionKey(section);
+    const cardId = `locked-card-${secKey}`;
     let card = document.getElementById(cardId);
     const isNew = !card;
 
@@ -183,7 +209,7 @@ function renderLockedCard(course, section) {
     }
 
     const daysStr = (section.days && section.days.length) ? section.days.join(', ') : 'Online';
-    const timeStr = (section.start_time !== 'TBA' && section.end_time !== 'TBA') 
+    const timeStr = (section.start_time && section.start_time !== 'TBA' && section.end_time && section.end_time !== 'TBA') 
         ? `${formatTimeTo12Hour(section.start_time)} - ${formatTimeTo12Hour(section.end_time)}` 
         : 'Asynchronous';
     const isCustom = String(section.class_code).startsWith('CUST-') || Boolean(course.is_custom);
@@ -195,7 +221,7 @@ function renderLockedCard(course, section) {
                 ${isCustom 
                     ? `<button type="button" class="btn-details" onclick="openCustomModal('${section.class_code}')">Edit</button>` 
                     : `<button type="button" class="btn-details" onclick="openCourseModal('${course.subject_code}', '${course.course_number}', '${section.section}')">Details</button>`}
-                <button type="button" class="btn-remove-pool" onclick="unlockSection('${section.class_code}')" title="Unlock and remove section">✕</button>
+                <button type="button" class="btn-remove-pool" onclick="unlockSection('${section.class_code}', '${section.term || getActiveTerm()}')" title="Unlock and return to course pool">✕</button>
             </div>
         </div>
         <div class="candidate-name" title="${course.name}">${course.name}</div>
@@ -210,12 +236,139 @@ function renderLockedCard(course, section) {
     }
 }
 
+function renderAllLockedSections() {
+    const lockedList = document.getElementById('lockedList');
+    if (!lockedList) return;
+
+    if (!Array.isArray(lockedSections) || lockedSections.length === 0) {
+        lockedList.innerHTML = `
+            <div class="empty-placeholder empty-grid-span" id="emptyLockedMsg">
+                No locked sections. Select a section dropdown in your pool or use "Lock This Section" in Details.
+            </div>
+        `;
+        syncLockedInput();
+        return;
+    }
+
+    lockedList.innerHTML = '';
+    lockedSections.forEach(item => {
+        if (item.course && item.section) {
+            renderLockedCard(item.course, item.section);
+        }
+    });
+    syncLockedInput();
+}
+
+function renderCandidatePoolUI() {
+    const container = document.getElementById('candidateList');
+    if (!container) return;
+
+    if (!candidatePool || candidatePool.length === 0) {
+        container.innerHTML = `<div class="empty-placeholder empty-grid-span" id="emptyPoolMsg">No eligible courses in generator pool. Add courses below.</div>`;
+        syncPoolInput();
+        updateCatalogSearchButtons();
+        return;
+    }
+
+    const groupNeededMap = getGroupNeededMap();
+
+    // Group courses by req_id
+    const grouped = {};
+    candidatePool.forEach(c => {
+        const gid = c.req_id || "user-added";
+        if (!grouped[gid]) {
+            grouped[gid] = {
+                req_id: gid,
+                name: c.req_group_name || (gid === "user-added" ? "Added Courses" : "Requirement Group"),
+                baseNeeded: c.req_needed || groupNeededMap[gid] || 1,
+                courses: []
+            };
+        }
+        grouped[gid].courses.push(c);
+    });
+
+    let html = '';
+    let totalVisibleCourses = 0;
+
+    Object.keys(grouped).forEach(gid => {
+        const grp = grouped[gid];
+        let netNeeded = grp.baseNeeded;
+
+        if (gid === "user-added") {
+            netNeeded = grp.courses.length;
+        } else {
+            const lockedCount = countLockedDistinctForGroup(gid);
+            netNeeded = Math.max(0, grp.baseNeeded - lockedCount);
+        }
+
+        // If requirement is satisfied, hide this group from the pool
+        if (netNeeded <= 0) {
+            return;
+        }
+
+        totalVisibleCourses += grp.courses.length;
+
+        html += `
+            <div class="candidate-group-block" id="group-block-${gid}" data-req-id="${gid}">
+                <div class="candidate-group-header">
+                    <span class="candidate-group-title">🎯 ${grp.name}</span>
+                    <span class="meta-pill pill-req">Need ${netNeeded}</span>
+                </div>
+                <div class="candidate-group-grid">
+        `;
+
+        grp.courses.forEach(c => {
+            const safeTitle = (c.name || '').replace(/"/g, '&quot;');
+            html += `
+                <div class="candidate-item-card" 
+                     id="candidate-card-${c.subject_code}-${c.course_number}"
+                     data-code="${c.subject_code} ${c.course_number}"
+                     data-dept="${c.subject_code}"
+                     data-num="${c.course_number}">
+                    <div class="card-header-flex">
+                        <div class="candidate-code">${c.subject_code} ${c.course_number}</div>
+                        <div class="candidate-actions flex-align-center">
+                            <button type="button" class="btn-details" onclick="openCourseModal('${c.subject_code}', '${c.course_number}')">Details</button>
+                            <button type="button" class="btn-remove-pool" onclick="removeCourseFromPool('${c.subject_code}', '${c.course_number}')" title="Remove from generator pool">✕</button>
+                        </div>
+                    </div>
+                    <div class="candidate-name" title="${safeTitle}">${safeTitle}</div>
+                    <div class="candidate-meta">
+                        <span class="meta-pill pill-blue">${c.credits || 3} cr</span>
+                    </div>
+                    <select class="section-select-dropdown" id="section-select-${c.subject_code}-${c.course_number}" 
+                            onchange="handleSectionSelectChange(this, '${c.subject_code}', '${c.course_number}')">
+                        <option value="" selected disabled>Loading sections...</option>
+                    </select>
+                </div>
+            `;
+        });
+
+        html += `
+                </div>
+            </div>
+        `;
+    });
+
+    if (totalVisibleCourses === 0) {
+        container.innerHTML = `<div class="empty-placeholder empty-grid-span" id="emptyPoolMsg">All requirement groups satisfied by locked courses.</div>`;
+    } else {
+        container.innerHTML = html;
+        candidatePool.forEach(c => {
+            loadSectionDropdown(c.subject_code, c.course_number);
+        });
+    }
+
+    syncPoolInput();
+    updateCatalogSearchButtons();
+}
+
 function lockSection(dept, num, sectionData) {
     const isDiscussion = String(sectionData.section).trim().toUpperCase().endsWith('D');
 
     const alreadyLockedThisCourse = lockedSections.filter(ls => 
-        ls.course.subject_code === dept && 
-        ls.course.course_number === num
+        String(ls.course.subject_code).trim().toUpperCase() === String(dept).trim().toUpperCase() && 
+        String(ls.course.course_number).trim().toUpperCase() === String(num).trim().toUpperCase()
     );
 
     const hasLockedLec = alreadyLockedThisCourse.some(ls => !String(ls.section.section).trim().toUpperCase().endsWith('D'));
@@ -230,12 +383,29 @@ function lockSection(dept, num, sectionData) {
         unlockSection(oldDisc.section.class_code);
     }
 
-    let courseData = null;
-    const poolIdx = candidatePool.findIndex(c => c.subject_code === dept && c.course_number === num);
-    if (poolIdx !== -1) {
-        courseData = candidatePool[poolIdx];
-    } else if (activeModalCourse && activeModalCourse.subject_code === dept && activeModalCourse.course_number === num) {
-        courseData = activeModalCourse;
+    let courseData = candidatePool.find(c => 
+        String(c.subject_code).trim().toUpperCase() === String(dept).trim().toUpperCase() && 
+        String(c.course_number).trim().toUpperCase() === String(num).trim().toUpperCase()
+    );
+
+    if (!courseData && Array.isArray(window.MASTER_CATALOG_CANDIDATES)) {
+        courseData = window.MASTER_CATALOG_CANDIDATES.find(c => 
+            String(c.subject_code).trim().toUpperCase() === String(dept).trim().toUpperCase() && 
+            String(c.course_number).trim().toUpperCase() === String(num).trim().toUpperCase()
+        );
+    }
+
+    if (!courseData && activeModalCourse) {
+        courseData = {
+            subject_code: activeModalCourse.subject_code,
+            course_number: activeModalCourse.course_number,
+            name: activeModalCourse.name || `${activeModalCourse.subject_code} ${activeModalCourse.course_number}`,
+            credits: activeModalCourse.credits || 3,
+            sections_count: activeModalCourse.sections_count || 1,
+            req_id: "user-added",
+            req_group_name: "Added Courses",
+            req_needed: 1
+        };
     }
 
     if (!courseData) return;
@@ -245,127 +415,125 @@ function lockSection(dept, num, sectionData) {
         section: sectionData
     });
 
-    renderLockedCard(courseData, sectionData);
-    syncLockedInput();
+    renderAllLockedSections();
 
+    // Check if course has both lecture and discussion requirements
     const selectElem = document.getElementById(`section-select-${dept}-${num}`);
     let allSections = [];
     if (selectElem && selectElem.dataset.sectionsJson) {
         try { allSections = JSON.parse(selectElem.dataset.sectionsJson); } catch (e) {}
     }
-
     const hasDiscussions = allSections.some(s => String(s.section).trim().toUpperCase().endsWith('D'));
     const hasLectures = allSections.some(s => !String(s.section).trim().toUpperCase().endsWith('D'));
     const requiresBoth = hasDiscussions && hasLectures;
 
     const totalLockedForCourse = lockedSections.filter(ls => 
-        ls.course.subject_code === dept && 
-        ls.course.course_number === num
+        String(ls.course.subject_code).trim().toUpperCase() === String(dept).trim().toUpperCase() && 
+        String(ls.course.course_number).trim().toUpperCase() === String(num).trim().toUpperCase()
     ).length;
 
     if (!requiresBoth || totalLockedForCourse >= 2) {
-        if (poolIdx !== -1) candidatePool.splice(poolIdx, 1);
-        const poolCard = document.getElementById(`candidate-card-${dept}-${num}`);
-        if (poolCard) poolCard.remove();
-        syncPoolInput();
-    } else {
-        repopulateCandidateDropdown(dept, num);
+        candidatePool = candidatePool.filter(c => !(
+            String(c.subject_code).trim().toUpperCase() === String(dept).trim().toUpperCase() && 
+            String(c.course_number).trim().toUpperCase() === String(num).trim().toUpperCase()
+        ));
     }
 
-    updateCatalogSearchButtons();
+    renderCandidatePoolUI();
 }
 
-function unlockSection(classCode) {
+function unlockSection(classCode, term = null) {
     const targetCode = String(classCode);
-    const lockedItem = lockedSections.find(ls => String(ls.section.class_code) === targetCode);
-    const isCustom = targetCode.startsWith("CUST-") || (lockedItem && (lockedItem.is_custom || (lockedItem.course && lockedItem.course.is_custom)));
-    const courseToRestore = (lockedItem && !isCustom) ? lockedItem.course : null;
+    const targetTerm = term || getActiveTerm();
 
-    lockedSections = lockedSections.filter(ls => String(ls.section.class_code) !== targetCode);
-    window.lockedSections = lockedSections;
+    const lockedItem = lockedSections.find(ls => 
+        String(ls.section.class_code) === targetCode && 
+        (!term || String(ls.section.term || getActiveTerm()) === String(targetTerm))
+    );
+    if (!lockedItem) return;
 
-    document.querySelectorAll(`[id="locked-card-${targetCode}"]`).forEach(el => el.remove());
+    const secKey = getSectionKey(lockedItem.section);
+    const isCustom = targetCode.startsWith("CUST-") || lockedItem.is_custom || (lockedItem.course && lockedItem.course.is_custom);
+    const unlockedCourse = lockedItem.course;
 
-    if (lockedSections.length === 0) {
-        const lockedList = document.getElementById('lockedList');
-        if (lockedList) {
-            lockedList.innerHTML = `
-                <div class="empty-placeholder" id="emptyLockedMsg" style="grid-column: 1 / -1;">
-                    No locked sections. Select a section dropdown in your pool or use "Lock This Section" in Details.
-                </div>
-            `;
-        }
-    }
+    lockedSections = lockedSections.filter(ls => getSectionKey(ls.section) !== secKey);
+    renderAllLockedSections();
 
     if (isCustom) {
         if (customCourseCounter > 1) {
             customCourseCounter--;
             window.customCourseCounter = customCourseCounter;
-            const numInput = document.getElementById('customNumInput');
-            if (numInput && !numInput.value) {
-                numInput.placeholder = String(customCourseCounter);
-            }
         }
-    } else if (courseToRestore) {
-        const dept = courseToRestore.subject_code;
-        const num = courseToRestore.course_number;
+    } else if (unlockedCourse) {
+        const gid = unlockedCourse.req_id || "user-added";
 
-        const existingCard = document.getElementById(`candidate-card-${dept}-${num}`);
-        if (existingCard) {
-            repopulateCandidateDropdown(dept, num);
+        if (gid === "user-added") {
+            const alreadyInPool = candidatePool.some(c => 
+                String(c.subject_code).trim().toUpperCase() === String(unlockedCourse.subject_code).trim().toUpperCase() && 
+                String(c.course_number).trim().toUpperCase() === String(unlockedCourse.course_number).trim().toUpperCase()
+            );
+            if (!alreadyInPool) {
+                candidatePool.push(unlockedCourse);
+            }
         } else {
-            addCourseToPool(courseToRestore);
-            repopulateCandidateDropdown(dept, num);
+            if (Array.isArray(window.MASTER_CATALOG_CANDIDATES)) {
+                window.MASTER_CATALOG_CANDIDATES.forEach(masterCourse => {
+                    if (masterCourse.req_id === gid) {
+                        const isCurrentlyLocked = lockedSections.some(ls => 
+                            ls.course && 
+                            String(ls.course.subject_code).trim().toUpperCase() === String(masterCourse.subject_code).trim().toUpperCase() && 
+                            String(ls.course.course_number).trim().toUpperCase() === String(masterCourse.course_number).trim().toUpperCase()
+                        );
+                        const alreadyInPool = candidatePool.some(c => 
+                            String(c.subject_code).trim().toUpperCase() === String(masterCourse.subject_code).trim().toUpperCase() && 
+                            String(c.course_number).trim().toUpperCase() === String(masterCourse.course_number).trim().toUpperCase()
+                        );
+                        if (!isCurrentlyLocked && !alreadyInPool) {
+                            candidatePool.push(masterCourse);
+                        }
+                    }
+                });
+            }
         }
     }
 
+    renderCandidatePoolUI();
     syncLockedInput();
     updateCatalogSearchButtons();
 }
 
 function addCourseToPool(courseData, btnElement) {
-    const exists = candidatePool.some(c => c.subject_code === courseData.subject_code && c.course_number === courseData.course_number);
-    const isLocked = lockedSections.some(ls => ls.course.subject_code === courseData.subject_code && ls.course.course_number === courseData.course_number);
+    const dept = String(courseData.subject_code).trim().toUpperCase();
+    const num = String(courseData.course_number).trim().toUpperCase();
+
+    const exists = candidatePool.some(c => 
+        String(c.subject_code).trim().toUpperCase() === dept && 
+        String(c.course_number).trim().toUpperCase() === num
+    );
+    const isLocked = lockedSections.some(ls => 
+        ls.course && 
+        String(ls.course.subject_code).trim().toUpperCase() === dept && 
+        String(ls.course.course_number).trim().toUpperCase() === num
+    );
     if (exists || isLocked) return;
 
-    candidatePool.push(courseData);
+    // Check if course belongs to an audit requirement group
+    let fullCourse = null;
+    if (Array.isArray(window.MASTER_CATALOG_CANDIDATES)) {
+        fullCourse = window.MASTER_CATALOG_CANDIDATES.find(c => 
+            String(c.subject_code).trim().toUpperCase() === dept && 
+            String(c.course_number).trim().toUpperCase() === num
+        );
+    }
 
-    const emptyMsg = document.getElementById('emptyPoolMsg');
-    if (emptyMsg) emptyMsg.remove();
-
-    const list = document.getElementById('candidateList');
-    if (list) {
-        const card = document.createElement('div');
-        card.className = 'candidate-item-card';
-        card.id = `candidate-card-${courseData.subject_code}-${courseData.course_number}`;
-        card.setAttribute('data-code', `${courseData.subject_code} ${courseData.course_number}`);
-        card.setAttribute('data-dept', courseData.subject_code);
-        card.setAttribute('data-num', courseData.course_number);
-        card.setAttribute('data-name', courseData.name || '');
-        card.setAttribute('data-credits', courseData.credits);
-        card.setAttribute('data-sections', courseData.sections_count);
-
-        const safeTitle = (courseData.name || '').replace(/"/g, '&quot;');
-
-        card.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                <div class="candidate-code">${courseData.subject_code} ${courseData.course_number}</div>
-                <div style="display: flex; gap: 6px; align-items: center;">
-                    <button type="button" class="btn-details" onclick="openCourseModal('${courseData.subject_code}', '${courseData.course_number}')">Details</button>
-                    <button type="button" class="btn-remove-pool" onclick="removeCourseFromPool('${courseData.subject_code}', '${courseData.course_number}')" title="Remove from generator pool">✕</button>
-                </div>
-            </div>
-            <div class="candidate-name" title="${safeTitle}">${safeTitle}</div>
-            <div class="candidate-meta">
-                <span class="meta-pill pill-blue">${courseData.credits} cr</span>
-            </div>
-            <select class="section-select-dropdown" id="section-select-${courseData.subject_code}-${courseData.course_number}" 
-                    onchange="handleSectionSelectChange(this, '${courseData.subject_code}', '${courseData.course_number}')">
-                <option value="" selected disabled>Loading sections...</option>
-            </select>
-        `;
-        list.appendChild(card);
-        loadSectionDropdown(courseData.subject_code, courseData.course_number);
+    if (fullCourse) {
+        candidatePool.push(JSON.parse(JSON.stringify(fullCourse)));
+    } else {
+        const addedCourse = JSON.parse(JSON.stringify(courseData));
+        addedCourse.req_id = "user-added";
+        addedCourse.req_group_name = "Added Courses";
+        addedCourse.req_needed = 1;
+        candidatePool.push(addedCourse);
     }
 
     if (btnElement) {
@@ -373,41 +541,23 @@ function addCourseToPool(courseData, btnElement) {
         btnElement.classList.add('added');
         btnElement.disabled = true;
     }
-    syncPoolInput();
+
+    renderCandidatePoolUI();
     updateCatalogSearchButtons();
 }
 
 function removeCourseFromPool(dept, num) {
-    candidatePool = candidatePool.filter(c => !(c.subject_code === dept && c.course_number === num));
-    
-    const card = document.getElementById(`candidate-card-${dept}-${num}`);
-    if (card) card.remove();
-
-    const list = document.getElementById('candidateList');
-    if (candidatePool.length === 0 && list) {
-        list.innerHTML = `<div class="empty-placeholder" id="emptyPoolMsg" style="grid-column: 1 / -1;">No eligible courses in generator pool. Add courses below.</div>`;
-    }
-    syncPoolInput();
+    candidatePool = candidatePool.filter(c => !(
+        String(c.subject_code).trim().toUpperCase() === String(dept).trim().toUpperCase() && 
+        String(c.course_number).trim().toUpperCase() === String(num).trim().toUpperCase()
+    ));
+    renderCandidatePoolUI();
     updateCatalogSearchButtons();
 }
 
 function clearAllCandidateCourses() {
-    if (candidatePool.length === 0) return;
-
     candidatePool = [];
-
-    const list = document.getElementById('candidateList');
-    if (list) {
-        list.innerHTML = `<div class="empty-placeholder" id="emptyPoolMsg" style="grid-column: 1 / -1;">No eligible courses in generator pool. Add courses below.</div>`;
-    }
-
-    document.querySelectorAll('.btn-add-pool').forEach(btn => {
-        btn.textContent = '+ Add';
-        btn.classList.remove('added');
-        btn.disabled = false;
-    });
-
-    syncPoolInput();
+    renderCandidatePoolUI();
     updateCatalogSearchButtons();
 }
 
@@ -533,77 +683,22 @@ function initCandidatePool() {
     try {
         const rawLockedInput = document.getElementById('locked_sections_json');
         if (rawLockedInput && rawLockedInput.value) {
-            const parsed = JSON.parse(rawLockedInput.value);
-            
-            const seenCodes = new Set();
-            lockedSections = [];
-            for (const item of parsed) {
-                const code = String(item.section ? item.section.class_code : '');
-                if (code && !seenCodes.has(code)) {
-                    seenCodes.add(code);
-                    lockedSections.push(item);
-                }
-            }
+            lockedSections = JSON.parse(rawLockedInput.value);
             window.lockedSections = lockedSections;
-            rawLockedInput.value = JSON.stringify(lockedSections);
         }
     } catch (e) {
-        console.error("Failed to parse locked sections JSON:", e);
         lockedSections = [];
-        window.lockedSections = [];
     }
 
-    const lockedCountBadge = document.getElementById('lockedCount');
-    if (lockedCountBadge) {
-        lockedCountBadge.textContent = `${lockedSections.length} Locked`;
+    // Populate initial pool from master candidates
+    if (Array.isArray(window.MASTER_CATALOG_CANDIDATES) && window.MASTER_CATALOG_CANDIDATES.length > 0) {
+        candidatePool = JSON.parse(JSON.stringify(window.MASTER_CATALOG_CANDIDATES));
+    } else {
+        candidatePool = [];
     }
 
-    candidatePool = [];
-    document.querySelectorAll('#candidateList .candidate-item-card').forEach(card => {
-        const dept = card.getAttribute('data-dept');
-        const num = card.getAttribute('data-num');
-        const name = card.getAttribute('data-name');
-        const credits = parseInt(card.getAttribute('data-credits'), 10) || 3;
-        const sections_count = parseInt(card.getAttribute('data-sections'), 10) || 0;
-
-        const lockedForCourse = lockedSections.filter(ls => 
-            String(ls.course.subject_code).toUpperCase() === String(dept).toUpperCase() && 
-            String(ls.course.course_number).toUpperCase() === String(num).toUpperCase()
-        );
-
-        if (lockedForCourse.length > 0) {
-            const hasLecLocked = lockedForCourse.some(ls => !String(ls.section.section).trim().toUpperCase().endsWith('D'));
-            const hasDiscLocked = lockedForCourse.some(ls => String(ls.section.section).trim().toUpperCase().endsWith('D'));
-
-            let rawSecs = [];
-            try {
-                const sel = card.querySelector('.section-select-dropdown');
-                if (sel && sel.dataset.sectionsJson) {
-                    rawSecs = JSON.parse(sel.dataset.sectionsJson);
-                }
-            } catch (e) {}
-
-            const hasDiscInCatalog = rawSecs.some(s => String(s.section).trim().toUpperCase().endsWith('D'));
-
-            if (!hasDiscInCatalog || (hasLecLocked && hasDiscLocked)) {
-                card.remove();
-                return;
-            }
-        }
-
-        candidatePool.push({
-            subject_code: dept,
-            course_number: num,
-            name: name,
-            credits: credits,
-            sections_count: sections_count
-        });
-
-        loadSectionDropdown(dept, num);
-    });
-
-    window.candidatePool = candidatePool;
-    syncPoolInput();
+    renderAllLockedSections();
+    renderCandidatePoolUI();
 }
 
 // =================================================================
@@ -737,7 +832,10 @@ function submitCustomSection() {
         name: `Custom Added Course (${deptVal} ${numVal})`,
         credits: 3,
         sections_count: 1,
-        is_custom: true
+        is_custom: true,
+        req_id: "user-added",
+        req_group_name: "Added Courses",
+        req_needed: 1
     };
 
     const customSectionObj = {
@@ -746,7 +844,10 @@ function submitCustomSection() {
         days: selectedDays,
         start_time: startTime,
         end_time: endTime,
-        is_online: false
+        location: "Self-Enrolled (WISER)",
+        is_online: false,
+        status: "Open",
+        term: getActiveTerm()
     };
 
     const conflict = checkLockedSectionConflict(customSectionObj, `${deptVal} ${numVal}`, isEditing ? classCode : null);
@@ -777,14 +878,13 @@ function submitCustomSection() {
         window.customCourseCounter = customCourseCounter;
     }
 
-    renderLockedCard(customCourseObj, customSectionObj);
-    syncLockedInput();
-
+    renderAllLockedSections();
+    renderCandidatePoolUI();
     closeCustomModal();
 }
 
 // =================================================================
-// 5. UNIVERSITY CATALOG SEARCH & GEN ED FILTERS (HASH SET OPTIMIZED)
+// 5. CATALOG SEARCH WITH COMPLETED COURSES WARNING CHECK
 // =================================================================
 let searchDebounceTimer = null;
 let currentSearchResults = [];
@@ -874,9 +974,7 @@ function executeCatalogSearch() {
     searchDebounceTimer = setTimeout(() => {
         lastSearchQuery = searchKey;
 
-        if (searchAbortController) {
-            searchAbortController.abort();
-        }
+        if (searchAbortController) searchAbortController.abort();
         searchAbortController = new AbortController();
 
         const params = new URLSearchParams();
@@ -888,10 +986,7 @@ function executeCatalogSearch() {
             .then(res => res.json())
             .then(data => {
                 currentSearchResults = data;
-                if (catalogCountBadge) {
-                    catalogCountBadge.textContent = `${data.length} Found`;
-                }
-
+                if (catalogCountBadge) catalogCountBadge.textContent = `${data.length} Found`;
                 if (!resultsList) return;
 
                 if (data.length === 0) {
@@ -906,11 +1001,18 @@ function executeCatalogSearch() {
                     lockedSections.map(ls => `${String(ls.course.subject_code).trim().toUpperCase()} ${String(ls.course.course_number).trim().toUpperCase()}`)
                 );
 
+                const completedSet = new Set(
+                    (Array.isArray(window.COMPLETED_COURSES) ? window.COMPLETED_COURSES : []).map(c => String(c).replace(/\s+/g, '').toUpperCase())
+                );
+
                 resultsList.innerHTML = data.map((c, idx) => {
                     const courseKey = `${String(c.subject_code).trim().toUpperCase()} ${String(c.course_number).trim().toUpperCase()}`;
+                    const compactKey = `${String(c.subject_code).trim().toUpperCase()}${String(c.course_number).trim().toUpperCase()}`;
+                    
                     const inPool = poolSet.has(courseKey);
                     const isLocked = lockedSet.has(courseKey);
                     const isAdded = inPool || isLocked;
+                    const isAlreadyCompleted = completedSet.has(compactKey);
                     const safeTitle = (c.description || '').replace(/"/g, '&quot;');
 
                     return `
@@ -926,6 +1028,13 @@ function executeCatalogSearch() {
                                 </div>
                             </div>
                             <div class="candidate-name" style="font-size: 11px; color: #475569; margin: 4px 0;">${safeTitle}</div>
+                            
+                            ${isAlreadyCompleted ? `
+                                <div class="completed-warning-card">
+                                    ⚠️ <strong>Already Taken:</strong> Scanned as completed in your degree audit. You can still add it if repeating.
+                                </div>
+                            ` : ''}
+
                             <div class="candidate-meta">
                                 <span class="meta-pill pill-blue">${c.credits} cr</span>
                                 <span class="meta-pill">${c.gen_ed !== 'None' ? c.gen_ed : 'No Gen Ed'}</span>
@@ -936,9 +1045,7 @@ function executeCatalogSearch() {
                 }).join('');
             })
             .catch(err => {
-                if (err.name !== 'AbortError') {
-                    console.error("Error searching courses:", err);
-                }
+                if (err.name !== 'AbortError') console.error("Error searching courses:", err);
             });
     }, 300);
 }
@@ -1153,7 +1260,17 @@ function renderActiveSectionTab(index) {
     const s = currentModalSections[index];
     if (!s || !activeModalCourse) return;
 
-    const formattedTime = (s.start_time !== 'TBA') ? `${formatTimeTo12Hour(s.start_time)} - ${formatTimeTo12Hour(s.end_time)}` : '';
+    const formattedTime = (s.start_time && s.start_time !== 'TBA') 
+        ? `${formatTimeTo12Hour(s.start_time)} - ${formatTimeTo12Hour(s.end_time)}` 
+        : '';
+
+    const statusText = String(s.status || (s.is_full ? 'Closed' : 'Open')).trim();
+    const isWaitlist = statusText.toLowerCase().includes('wait');
+    const isClosed = statusText.toLowerCase() === 'closed';
+
+    let statusBadgeColor = '#16a34a';
+    if (isWaitlist) statusBadgeColor = '#d97706';
+    if (isClosed) statusBadgeColor = '#dc2626';
 
     const content = document.getElementById('modalSectionContent');
     content.innerHTML = `
@@ -1185,8 +1302,7 @@ function renderActiveSectionTab(index) {
             <div class="info-item" style="grid-column: 1 / -1;">
                 <div class="info-label">Enrollment Status</div>
                 <div class="info-value">
-                    ${s.enrolled} / ${s.maximum_capacity} enrolled 
-                    ${s.is_full ? '<span style="color: #dc2626; font-weight: 700; margin-left: 8px;">(Full / Waitlist)</span>' : '<span style="color: #16a34a; font-weight: 700; margin-left: 8px;">(Open)</span>'}
+                    <span style="color: ${statusBadgeColor}; font-weight: 700;">${statusText}</span>
                 </div>
             </div>
         </div>
@@ -1197,8 +1313,8 @@ function renderActiveSectionTab(index) {
 
     const targetDept = String(activeModalCourse.subject_code || activeModalCourse.course_name || "").trim().toUpperCase();
     const targetNum = String(activeModalCourse.course_number || "").trim().toUpperCase();
-
     const isDisc = String(s.section).trim().toUpperCase().endsWith('D');
+
     const lockedItem = lockedSections.find(ls => {
         if (!ls.course || !ls.section) return false;
         const curDept = String(ls.course.subject_code || ls.course.course_name || "").trim().toUpperCase();
@@ -1235,7 +1351,6 @@ function lockSectionFromModal() {
     const targetNum = String(activeModalCourse.course_number || "").trim().toUpperCase();
     const courseCode = `${targetDept} ${targetNum}`;
 
-    // A course can hold one lecture AND one discussion, so only swap with the same kind
     const newIsDisc = String(newSection.section).trim().toUpperCase().endsWith('D');
     const existingIndex = lockedSections.findIndex(ls => {
         if (!ls.course || !ls.section) return false;
@@ -1261,13 +1376,8 @@ function lockSectionFromModal() {
     }
 
     if (isSwapping) {
-        if (oldClassCode) {
-            const oldCard = document.getElementById(`locked-card-${oldClassCode}`);
-            if (oldCard) oldCard.remove();
-        }
-
         lockedSections[existingIndex].section = newSection;
-        renderLockedCard(lockedSections[existingIndex].course, newSection);
+        renderAllLockedSections();
         syncLockedInput();
     } else {
         lockSection(targetDept, targetNum, newSection);
@@ -1395,6 +1505,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
 
+            document.querySelectorAll('.candidate-group-block').forEach(block => {
+                const visibleCards = block.querySelectorAll('.candidate-item-card:not([style*="display: none"])');
+                block.style.display = visibleCards.length > 0 ? 'block' : 'none';
+            });
+
             const countBadge = document.getElementById('candidateCount');
             if (countBadge) {
                 countBadge.textContent = `${visibleCount} Courses`;
@@ -1425,5 +1540,56 @@ document.addEventListener('DOMContentLoaded', () => {
     const targetCountInput = document.getElementById('target_course_count');
     if (targetCountInput) {
         targetCountInput.addEventListener('input', verifyPoolComplexity);
+    }
+
+    // -----------------------------------------------------------------
+    // Scroll Restoration & Result Anchoring on Form Submit
+    // -----------------------------------------------------------------
+    const restrictionsForm = document.querySelector('form.restrictions-card');
+
+    if (restrictionsForm) {
+        restrictionsForm.addEventListener('submit', () => {
+            sessionStorage.setItem('planner_scroll_pos', window.scrollY);
+        });
+    }
+
+    const savedScrollPos = sessionStorage.getItem('planner_scroll_pos');
+    if (savedScrollPos !== null) {
+        sessionStorage.removeItem('planner_scroll_pos');
+
+        const timetableElem = document.getElementById('timetableSection');
+        if (timetableElem) {
+            // If a schedule was generated, scroll right to the timetable output
+            timetableElem.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+            // Otherwise, restore the exact scroll position before submission
+            window.scrollTo({
+                top: parseInt(savedScrollPos, 10),
+                behavior: 'instant'
+            });
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Floating Back to Top Button Logic
+    // -----------------------------------------------------------------
+    const backToTopBtn = document.getElementById('btnBackToTop');
+
+    if (backToTopBtn) {
+        window.addEventListener('scroll', () => {
+            // Reveal button once the user scrolls down 300px
+            if (window.scrollY > 300) {
+                backToTopBtn.classList.add('show');
+            } else {
+                backToTopBtn.classList.remove('show');
+            }
+        }, { passive: true });
+
+        backToTopBtn.addEventListener('click', () => {
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+        });
     }
 });
