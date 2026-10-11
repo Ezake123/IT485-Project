@@ -96,7 +96,6 @@ class DegreeAuditResult:
 # Format to match the data exactly like the ones in database
 #--------------------------------------------------------------
 
-#
 @dataclass
 class SchedulePreferences:
     earliest_start: Optional[time] = None       # e.g., time(9, 0)
@@ -104,6 +103,7 @@ class SchedulePreferences:
     allowed_days: Optional[List[str]] = None    # e.g., ['M', 'Tu', 'W', 'Th', 'F']
     delivery_mode: str = "Any"                  # "In-person", "Online", or "Any"
     ignore_capacity: bool = False               # Ignore capacity limit in schedule
+    exclude_online: bool = False                # Exclude online / asynchronous sections
 
 @dataclass
 class Section:
@@ -115,8 +115,7 @@ class Section:
     start_time: Optional[time] = None
     end_time: Optional[time] = None
     location: Optional[str] = None
-    maximum_capacity: Optional[int] = None
-    enrolled: Optional[int] = None
+    status: str = "Open"
     instructors: List[str] = field(default_factory=lambda: ["TBA"])
     term: Optional[str] = None
     credits: int = 0                            
@@ -134,9 +133,7 @@ class Section:
 
     @property
     def is_full(self) -> bool:
-        if self.maximum_capacity is not None and self.enrolled is not None:
-            return self.enrolled >= self.maximum_capacity
-        return False
+        return self.status.lower() in ["closed", "waitlist", "waitlisted"]
 
     @property
     def delivery_type(self) -> str:
@@ -158,6 +155,8 @@ class Section:
         return {
             "class_code": self.class_code,
             "section": self.section,
+            "term": self.term,
+            "credits": self.credits,
             "days": self.days or [],
             "start_time": self.formatted_start_time,
             "end_time": self.formatted_end_time,
@@ -298,8 +297,7 @@ class CatalogManager:
                     start_time=parse_time_value(row.get("start_time")),
                     end_time=parse_time_value(row.get("end_time")),
                     location=row.get("location"),
-                    maximum_capacity=row.get("maximum_capacity"),
-                    enrolled=row.get("enrolled"),
+                    status=row.get("status", "Open"),
                     instructors=row.get("instructors") or ["TBA"],
                     term=row.get("term"),
                     credits=sec_credits

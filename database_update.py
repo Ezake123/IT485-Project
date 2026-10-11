@@ -92,20 +92,24 @@ def upload_catalog_and_sections(file_path: str):
     # -------------------------------------------------------------
     sections_payload = []
     for r in records:
+        # Ignore empty/dummy entries without a valid class code
+        if not r.get("class_code"):
+            continue
+
         sections_payload.append({
             "class_code": str(r["class_code"]),
             "course_name": r["course_name"],
             "course_number": r["course_number"],
             "section": str(r.get("section", "")),
             "term": term,
-            "credits": r.get("credits") or 0,          # <-- Added to upsert payload
+            "credits": r.get("credits") or 0,
             "days": r.get("days") or [],
             "start_time": r.get("start_time"),
             "end_time": r.get("end_time"),
             "location": r.get("location"),
-            "maximum_capacity": r.get("maximum_capacity") or 0,
-            "enrolled": r.get("enrolled") or 0,
+            "status": str(r.get("status") or "Open").strip(),
             "instructors": r.get("instructors") if r.get("instructors") else ["TBA"]
+            # 'url' is intentionally excluded from the payload
         })
 
     print(f"Upserting {len(sections_payload)} sections...")
@@ -114,7 +118,7 @@ def upload_catalog_and_sections(file_path: str):
         chunk = sections_payload[i : i + batch_size]
         supabase.table("course_sections").upsert(
             chunk, 
-            on_conflict="class_code"
+            on_conflict="class_code,term"
         ).execute()
 
     print(f"Successfully synced catalog and sections for {term}!")
