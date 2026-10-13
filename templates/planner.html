@@ -486,6 +486,19 @@
 
         <!-- 7. SCHEDULED COURSES OUTPUT -->
         {% if is_generated and schedule %}
+            <!-- survey -->
+            <div class="feedback-cta-banner">
+                <div class="feedback-cta-content">
+                    <div>
+                        <strong>Tried out ClassPick? We'd love your thoughts!</strong>
+                        <p>Tell us about your experiences and how the schedule builder worked for you and what we can improve in a quick 1 - 2 minute survey.</p>
+                    </div>
+                </div>
+                <a href="https://docs.google.com/forms/d/e/1FAIpQLSfuu2U6K53OCovCZsbRZIl9S0wycXzleq4HrR9tvo7auPdtWg/viewform?usp=dialog" target="_blank" rel="noopener noreferrer" class="btn-feedback-cta">
+                    Share Feedback ↗
+                </a>
+            </div>
+        
             <div class="course-box box-blue-top">
                 <div class="box-header">
                     <span class="box-title">Scheduled Courses ({{ selected_term }})</span>
@@ -613,6 +626,18 @@
             <p><b>ClassPick</b> is a UMass Boston Fall 2026 IT capstone project.</p>
             <p><b>Created by:</b>  Jiahong Huang, Hunter Ward, Hasan Algafri, and William Ramos</p>
             <p><b>Note:</b> This application is a student project and not an official university registration system. Verify all schedule requirements with an academic advisor prior to enrollment.</p>
+        </div>
+        <div class="footer-feedback-link">
+            <a href="https://docs.google.com/forms/d/e/1FAIpQLSfuu2U6K53OCovCZsbRZIl9S0wycXzleq4HrR9tvo7auPdtWg/viewform?usp=dialog" target="_blank" rel="noopener noreferrer" class="footer-icon-btn" title="Leave feedback on our Google Form">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                <span>Give Feedback</span>
+            </a>
         </div>
     </footer>
 
