@@ -349,17 +349,17 @@ def describe_wildcards(tokens: list[str]) -> list[str]:
         lvl_sorted = sorted(all_levels)
         min_lvl = f"{lvl_sorted[0]}00"
         max_lvl = f"{lvl_sorted[-1]}00"
-        level_phrase = f"{min_lvl}–{max_lvl}-level" if len(lvl_sorted) > 1 else f"{min_lvl}-level"
+        level_phrase = f"{min_lvl}–{max_lvl} level" if len(lvl_sorted) > 1 else f"{min_lvl} level"
         parts.append(f"Any {level_phrase} World Language course")
     else:
         for d in lang_depts:
             lvl_sorted = sorted(levels_by_dept[d])
-            level_text = f"{lvl_sorted[0]}00-level" if len(lvl_sorted) == 1 else f"{lvl_sorted[0]}00–{lvl_sorted[-1]}00-level"
+            level_text = f"{lvl_sorted[0]}00-level" if len(lvl_sorted) == 1 else f"{lvl_sorted[0]}00 – {lvl_sorted[-1]}00 level"
             parts.append(f"Any {level_text} {d} course")
 
     for dept, levels in non_lang_depts.items():
         lvl_sorted = sorted(levels)
-        level_text = f"{lvl_sorted[0]}00-level" if len(lvl_sorted) == 1 else f"{lvl_sorted[0]}00–{lvl_sorted[-1]}00-level"
+        level_text = f"{lvl_sorted[0]}00 level" if len(lvl_sorted) == 1 else f"{lvl_sorted[0]}00 – {lvl_sorted[-1]}00 level"
         parts.append(f"Any {level_text} {dept} course")
 
     return parts + ranges + other_tokens
