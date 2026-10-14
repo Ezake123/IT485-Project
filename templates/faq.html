@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frequently Asked Questions - ClassPick</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=7.0">
+
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='img/favicon-16x16.png') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='img/favicon-32x32.png') }}">
+    <link rel="icon" type="image/png" sizes="48x48" href="{{ url_for('static', filename='img/favicon-48x48.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='img/apple-touch-icon.png') }}">
+</head>
+<body class="page-faq">
+
+    <div class="site-top-bar">
+        <div class="shell">
+            <span>University of Massachusetts Boston</span>
+            <span>IT Capstone project</span>
+        </div>
+    </div>
+
+    <header class="site-header">
+        <div class="shell header-nav-row">
+            <a href="{{ url_for('index') }}" class="header-brand">
+                <img src="{{ url_for('static', filename='img/android-chrome-512x512.png') }}" 
+                    alt="ClassPick Logo" 
+                    class="brand-logo-img">
+                <div class="brand-text">
+                    <h1>ClassPick</h1>
+                    <small>A UMass Boston student project</small>
+                </div>
+            </a>
+            <nav class="nav-links" aria-label="Main navigation">
+                <a href="{{ url_for('index') }}" class="nav-link">Home</a>
+                <a href="{{ url_for('planner') }}" class="nav-link">Schedule builder</a>
+                <a href="{{ url_for('help_page') }}" class="nav-link">Help & Guide</a>
+                <a href="{{ url_for('faq_page') }}" class="nav-link active">FAQ</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="shell" style="padding-top: 2.5rem; padding-bottom: 4rem;">
+        <div class="section-header" style="max-width: 58rem; margin: 0 auto 1.5rem auto;">
+            <h2>Frequently Asked Questions (FAQ)</h2>
+            <p>Find answers to common questions about degree audit scanning, course pools, and schedule generation.</p>
+        </div>
+
+        <div class="faq-container">
+            <!-- 1. Website -->
+            <div class="faq-category-card" id="faq-website">
+                <div class="faq-category-header">
+                    <span class="faq-category-title">Website & General Overview</span>
+                </div>
+                <div class="faq-category-body">
+                    <div class="faq-nested-group">
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Is ClassPick an official university registration tool?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>No. ClassPick is an independent UMass Boston IT capstone project built by students. It acts as an advising preparation companion to calculate conflict-free schedules. Official enrollment must always be finalized through WISER.</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Does ClassPick store my student data or degree audit?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Never. Your degree audit is scanned in memory during your active browser session. No personal identifiers, grades, or transcripts are stored in our databases or saved onto external servers.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. Audit Upload -->
+            <div class="faq-category-card" id="faq-audit-upload">
+                <div class="faq-category-header">
+                    <span class="faq-category-title">Audit Upload & Degree Audit</span>
+                </div>
+                <div class="faq-category-body">
+                    <div class="faq-nested-group">
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Why did my PDF upload fail with a size limit error?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>ClassPick enforces a strict 100 KB limit because official text-based WISER audits are typically 25 KB to 60 KB. If your file is larger, ensure you downloaded the official text PDF from WISER and not a scanned photo or image of the document.</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Can I plan a semester without uploading an audit?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Yes! On the planner start screen, click "Build Schedule Manually (Without Degree Audit)". You can search all courses in the catalog and add them directly to your pool.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. Course Search -->
+            <div class="faq-category-card" id="faq-course-search">
+                <div class="faq-category-header">
+                    <span class="faq-category-title">Course Search & Gen Ed Filters</span>
+                </div>
+                <div class="faq-category-body">
+                    <div class="faq-nested-group">
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>How do I filter courses by General Education category?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>In the "Search All University Courses" box, click the "Gen Ed (0)" dropdown. Check one or more categories (e.g. Humanities, Natural Sciences) to instantly filter all course offerings for the selected semester.</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Why does a search result say "Already Taken"?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>If your uploaded audit lists a course as completed or currently in progress, ClassPick warns you so you avoid accidentally retaking a fulfilled requirement. You can still add it if you intend to repeat it.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Eligible Course Pool -->
+            <div class="faq-category-card" id="faq-eligible-pool">
+                <div class="faq-category-header">
+                    <span class="faq-category-title">Eligible Course Pool & Requirements</span>
+                </div>
+                <div class="faq-category-body">
+                    <div class="faq-nested-group">
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Why are requirements grouped into accordions?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Each requirement block represents an unfulfilled sub-requirement scanned from your audit (e.g. "Choose 1 from CS 210, CS 240"). Groups are collapsed by default to save screen space, displaying the total course and section count on the header bar.</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>What happens when I lock a course from a requirement group?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>The requirement quota automatically decrements in real-time. Once the quota reaches zero, the entire group is satisfied and safely hidden so the scheduler only looks for remaining unfulfilled slots.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. Locked-In Section -->
+            <div class="faq-category-card" id="faq-locked-section">
+                <div class="faq-category-header">
+                    <span class="faq-category-title">Locked-In Section Management</span>
+                </div>
+                <div class="faq-category-body">
+                    <div class="faq-nested-group">
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>What does locking a section do?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Locking anchors that exact meeting time and section number into your schedule. The solver treats locked sections as non-negotiable fixed blocks and calculates remaining courses around them without time collisions.</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Why did I receive a "Time Conflict Detected" alert when locking?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>ClassPick checks real-time meeting intervals. You cannot lock two sections that overlap on the same day and time. Unlock or edit the conflicting section first to proceed.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. Custom Course -->
+            <div class="faq-category-card" id="faq-custom-course">
+                <div class="faq-category-header">
+                    <span class="faq-category-title">Custom & Unlisted Courses</span>
+                </div>
+                <div class="faq-category-body">
+                    <div class="faq-nested-group">
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>When should I use "Add Custom / Unlisted Section"?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Use this if you are enrolled in an independent study, work study, off-campus internship, or unlisted lab that isn't yet present in our database. It blocks out the time on your weekly timetable so no other classes collide with it.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 7. Restrictions -->
+            <div class="faq-category-card" id="faq-restrictions">
+                <div class="faq-category-header">
+                    <span class="faq-category-title">Restrictions & Time Filters</span>
+                </div>
+                <div class="faq-category-body">
+                    <div class="faq-nested-group">
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>How do the earliest start and latest end time filters work?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>The solver will reject any section starting before your earliest start time or running past your latest end time. Asynchronous online courses without fixed meeting hours are unaffected unless you check "Exclude online courses".</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>What should I do if "No valid schedule combinations found" appears?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>This indicates your restrictions were too tight to fit your target course load. Try checking additional allowed meeting days, broadening your time window, or checking "Ignore course capacity limits".</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 8. Class Code -->
+            <div class="faq-category-card" id="faq-class-code">
+                <div class="faq-category-header">
+                    <span class="faq-category-title">Class Codes & WISER Registration</span>
+                </div>
+                <div class="faq-category-body">
+                    <div class="faq-nested-group">
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>How do I use the 4- or 5-digit class code in WISER?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>In your generated schedule list, click the <code>[Copy]</code> button next to the class number (e.g. #4802). In WISER, go to <strong>Enrollment: Add Classes</strong>, paste the number into the <strong>Enter Class Number</strong> box, and submit.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <div class="shell footer-flex-row">
+            <div>
+                <p><b>ClassPick</b> is a UMass Boston Fall 2026 IT capstone project.</p>
+                <p><b>Created by:</b> Jiahong Huang, Hunter Ward, Hasan Algafri, and William Ramos</p>
+                <p><b>Note:</b> Student capstone project; not an official university registration tool. Always verify course plans with an advisor.</p>
+            </div>
+            <div class="footer-actions-cluster">
+                <a href="{{ url_for('help_page') }}" class="footer-btn">Help & Guide</a>
+                <a href="{{ url_for('faq_page') }}" class="footer-btn">FAQ</a>
+                <a href="https://docs.google.com/forms/d/e/1FAIpQLSfuu2U6K53OCovCZsbRZIl9S0wycXzleq4HrR9tvo7auPdtWg/viewform?usp=dialog" target="_blank" rel="noopener noreferrer" class="footer-icon-btn" title="Leave feedback on our Google Form">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                    <span>Give Feedback</span>
+                </a>
+            </div>
+        </div>
+    </footer>
+
+    <button type="button" id="btnBackToTop" class="btn-back-to-top" aria-label="Scroll back to top" title="Back to top">
+        ▲
+    </button>
+</body>
+</html>

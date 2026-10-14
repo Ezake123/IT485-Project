@@ -27,7 +27,7 @@ from playwright.async_api import async_playwright
 
 BASE_URL = "https://courses.umb.edu/search/"
 MAX_PAGES = 55
-CONCURRENCY_LIMIT = 2 # reduced for the new website
+CONCURRENCY_LIMIT = 2
 MAX_SCRAPE_TIME_SECONDS = None
 
 # -----------------------------------------------------------------
@@ -42,23 +42,23 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 # -----------------------------------------------------------------
-# Splits course identifier (e.g. "ABA 650") into subject & number
+# Splits course identifier (e.g. "ABA 650", "MATH 114QR", "BIOL 111L")
 # -----------------------------------------------------------------
 def split_course_identifier(raw_name: str) -> tuple[str, str]:
     raw_name = clean_text(raw_name)
-    match = re.search(r"^([A-Z0-9\- ]+?)\s*(\d{1,4}[A-Z]?)$", raw_name, re.IGNORECASE)
+    # Changed [A-Z]? to [A-Za-z]* to allow arbitrary trailing letters (e.g. 114QR)
+    match = re.search(r"^([A-Za-z0-9\- ]+?)\s*(\d{1,4}[A-Za-z]*)$", raw_name, re.IGNORECASE)
     if match:
         return match.group(1).strip().upper(), match.group(2).strip().upper()
     return raw_name, ""
 
 # -----------------------------------------------------------------
-# Converts credits string to integer; if range (e.g. "1-3"), gets the lower credit
+# Converts credits string to integer; if range, gets the lower credit
 # -----------------------------------------------------------------
 def parse_credits(raw_credits: str) -> int | None:
     if not raw_credits:
         return None
     cleaned = clean_text(raw_credits)
-    # Match sequences of digits to pick the lowest if a range is present
     digits = re.findall(r"\d+", cleaned)
     if digits:
         return int(digits[0])
@@ -103,7 +103,6 @@ def parse_schedule(raw_time_str: str) -> tuple[list[str], str | None, str | None
     if not raw_time_str or raw_time_str.upper() in ["TBA", "ONLINE", "TBD", "NONE"]:
         return [], None, None
 
-    # Matches days abbreviation: Mo, Tu, We, Th, Fr, Sa, Su
     day_match = re.match(r"^((?:Mo|Tu|We|Th|Fr|Sa|Su)+)\s*(.*)$", raw_time_str, re.IGNORECASE)
     days_list = []
     time_part = raw_time_str
@@ -162,8 +161,8 @@ def clean_prerequisites(raw_text: str) -> dict:
     )
 
     normalized_text = cleaned_raw
-    normalized_text = re.sub(r"([A-Za-z]{2,8})(\d{2,4}[A-Za-z]?)", r"\1 \2", normalized_text)
-    normalized_text = re.sub(r"(\d{1,4}[A-Za-z]?)(or|and)\b", r"\1 \2", normalized_text, flags=re.IGNORECASE)
+    normalized_text = re.sub(r"([A-Za-z]{2,8})(\d{2,4}[A-Za-z]*)", r"\1 \2", normalized_text)
+    normalized_text = re.sub(r"(\d{1,4}[A-Za-z]*)(or|and)\b", r"\1 \2", normalized_text, flags=re.IGNORECASE)
 
     def expand_slash(match):
         dept = match.group(1)
@@ -171,7 +170,7 @@ def clean_prerequisites(raw_text: str) -> dict:
         num2 = match.group(3)
         return f"{dept} {num1} or {dept} {num2}"
 
-    normalized_text = re.sub(r"\b([A-Z]{2,8}(?:-[A-Z]+)?)\s*(\d{1,4}[A-Z]?)/(\d{1,4}[A-Z]?)\b", expand_slash, normalized_text)
+    normalized_text = re.sub(r"\b([A-Z]{2,8}(?:-[A-Z]+)?)\s*(\d{1,4}[A-Z]*)/(\d{1,4}[A-Z]*)\b", expand_slash, normalized_text)
     normalized_text = re.sub(r"&", " and ", normalized_text)
     normalized_text = re.sub(r"(?i)\bco-?requisite\b", "", normalized_text)
 
@@ -184,7 +183,7 @@ def clean_prerequisites(raw_text: str) -> dict:
         or_group = []
 
         for segment in or_options:
-            matches = list(re.finditer(r"\b([A-Z]{2,8}(?:-[A-Z]+)?)\s*(\d{1,4}[A-Z]?)\b", segment))
+            matches = list(re.finditer(r"\b([A-Z]{2,8}(?:-[A-Z]+)?)\s*(\d{1,4}[A-Z]*)\b", segment))
             for m in matches:
                 dept = m.group(1).upper()
                 num = m.group(2).upper()
@@ -194,7 +193,7 @@ def clean_prerequisites(raw_text: str) -> dict:
                     or_group.append(course_obj)
 
             if not matches and last_dept:
-                inherited_matches = re.finditer(r"\b(\d{3}[A-Z]?)\b", segment)
+                inherited_matches = re.finditer(r"\b(\d{3}[A-Z]*)\b", segment)
                 for im in inherited_matches:
                     course_obj = {"course_name": last_dept, "course_number": im.group(1).upper()}
                     if course_obj not in or_group:
@@ -216,12 +215,15 @@ def clean_prerequisites(raw_text: str) -> dict:
 def parse_course_detail(html_content: str) -> dict:
     soup = BeautifulSoup(html_content, "html.parser")
 
-    # 1. Course Code, Class Code, and Section Number from p.font-bold inside #courseContent
+    # 1. Program Title from h2.course-overview-header inside #courseContent
+    title_elem = soup.select_one("#courseContent h2.course-overview-header, h2.course-overview-header")
+    course_title = clean_text(title_elem.get_text()) if title_elem else ""
+
+    # 2. Course Code, Class Code, and Section Number from p.font-bold inside #courseContent
     course_name, course_number, class_code, section = "", "", "", ""
     font_bold_elem = soup.select_one("#courseContent p.font-bold")
     if font_bold_elem:
         bold_text = clean_text(font_bold_elem.get_text())
-        # Matches: "Course #: ABA 650, Class #: 4802, Section #: 01"
         c_match = re.search(r"Course\s*#?:\s*([A-Za-z0-9\- ]+?)(?:,|$)", bold_text, re.IGNORECASE)
         cl_match = re.search(r"Class\s*#?:\s*([0-9]+)", bold_text, re.IGNORECASE)
         sec_match = re.search(r"Section\s*#?:\s*([0-9A-Za-z]+)", bold_text, re.IGNORECASE)
@@ -233,25 +235,24 @@ def parse_course_detail(html_content: str) -> dict:
         if sec_match:
             section = sec_match.group(1).strip()
 
-    # 2. Description (#courseDescription)
+    # 3. Description (#courseDescription)
     desc_elem = soup.select_one("#courseDescription")
     description = clean_text(desc_elem.get_text()) if desc_elem else ""
 
-    # 3. Prerequisites (#coursePrereq)
+    # 4. Prerequisites (#coursePrereq)
     prereq_elem = soup.select_one("#coursePrereq")
     raw_prerequisites = clean_text(prereq_elem.get_text()) if prereq_elem else "None"
     prerequisites = clean_prerequisites(raw_prerequisites)
 
-    # 4. General Education Requirements (#genedrequirements)
+    # 5. General Education Requirements (#genedrequirements)
     gened_elem = soup.select_one("#genedrequirements")
     raw_gened = clean_text(gened_elem.get_text()) if gened_elem else ""
     gen_ed = raw_gened if raw_gened and raw_gened.upper() not in ["NONE", "N/A"] else None
 
-    # 5. Course Details Grid (#courseDetails)
+    # 6. Course Details Grid (#courseDetails)
     days, start_time, end_time = [], None, None
     location = ""
     credits_val = None
-    maximum_capacity, enrolled = None, None
     instructors = []
 
     details_grid = soup.select_one("#courseDetails")
@@ -271,7 +272,6 @@ def parse_course_detail(html_content: str) -> dict:
                     br.replace_with("\n")
                 lines = [clean_text(l) for l in p_tag.get_text().split("\n") if clean_text(l)]
                 for line in lines:
-                    # Skip date ranges like 1/25/27 - 5/12/27
                     if re.search(r"\d{1,2}/\d{1,2}/\d{2,4}", line):
                         continue
                     p_days, p_start, p_end = parse_schedule(line)
@@ -281,7 +281,7 @@ def parse_course_detail(html_content: str) -> dict:
                         end_time = p_end
                         break
 
-            # Location (first occurrence takes precedence)
+            # Location
             elif "location" in header_title and not location:
                 location = clean_text(p_tag.get_text())
 
@@ -308,6 +308,7 @@ def parse_course_detail(html_content: str) -> dict:
     return {
         "course_name": course_name,
         "course_number": course_number,
+        "course_title": course_title,
         "class_code": class_code,
         "section": section,
         "days": days,
@@ -325,7 +326,6 @@ def parse_course_detail(html_content: str) -> dict:
 # Fetches course detail using an existing, persistent page object
 # -----------------------------------------------------------------
 async def fetch_course(page, url: str):
-    # Human-like delay between course views
     await asyncio.sleep(random.uniform(1.2, 2.5))
     try:
         response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -333,7 +333,6 @@ async def fetch_course(page, url: str):
         if response and response.status == 403:
             print(f"  [403 Blocked] CloudFront rate-limited {url}. Backing off for 30s...")
             await asyncio.sleep(30)
-            # Retry once after cooling down
             response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             if response and response.status == 403:
                 return None
@@ -351,21 +350,6 @@ async def fetch_course(page, url: str):
         return None
 
 # -----------------------------------------------------------------
-# Saves records to JSON file
-# -----------------------------------------------------------------
-def save_and_display(results: list, output_filename: str):
-    if not results:
-        print("\nNo course records were scraped.")
-        return
-
-    with open(output_filename, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-
-    print("\n" + "=" * 40)
-    print(f"SAVED {len(results)} RECORDS TO {output_filename}")
-    print("=" * 40)
-
-# -----------------------------------------------------------------
 # Main execution workflow
 # -----------------------------------------------------------------
 async def run_scraper():
@@ -378,7 +362,6 @@ async def run_scraper():
     results = []
     scraped_urls = set()
     
-    # Load existing progress if restarting
     try:
         with open(output_file, "r", encoding="utf-8") as f:
             results = json.load(f)
@@ -402,9 +385,8 @@ async def run_scraper():
 
             catalog_page = await context.new_page()
 
-            # PHASE 1: Fast scan to collect unique URLs and their Status from the table
             detail_links = []
-            status_map = {}  # Maps URL -> Status (Open, Closed, Waitlist)
+            status_map = {}
             
             print("\n--- PHASE 1: Discovering Course Links & Statuses ---")
             for page_num in range(1, MAX_PAGES + 1):
@@ -423,7 +405,6 @@ async def run_scraper():
                 page_html = await catalog_page.content()
                 soup = BeautifulSoup(page_html, "html.parser")
                 
-                # Grab the link and its corresponding status column from the table row
                 for tr in soup.select("tbody tr"):
                     link_elem = tr.select_one("td.umass-course-title a[href*='.php'], a.image-link[href*='.php']")
                     if link_elem:
@@ -433,7 +414,6 @@ async def run_scraper():
                         if full_url not in detail_links:
                             detail_links.append(full_url)
                         
-                        # Grab status (4th column: Title | Section | Class# | Status)
                         tds = tr.find_all("td")
                         if len(tds) >= 4:
                             status_map[full_url] = clean_text(tds[3].get_text())
@@ -445,11 +425,9 @@ async def run_scraper():
             await catalog_page.close()
             print(f"Discovered {len(detail_links)} total course URLs to scrape.\n")
 
-            # PHASE 2: Scrape details using a single worker with cooldown pauses
             print("--- PHASE 2: Hydrating Course Details ---")
             worker_page = await context.new_page()
 
-            # Abort heavy assets on worker page
             await worker_page.route(
                 "**/*",
                 lambda route: route.abort()
@@ -465,20 +443,17 @@ async def run_scraper():
                 data = await fetch_course(worker_page, url)
                 if data:
                     data["url"] = url
-                    # Hydrate the status mapped from Phase 1
                     data["status"] = status_map.get(url, "Open") 
                     
                     results.append(data)
                     scraped_urls.add(url)
                     count += 1
 
-                    # Save progress every 5 courses
                     if count % 5 == 0:
                         with open(output_file, "w", encoding="utf-8") as f:
                             json.dump(results, f, indent=2, ensure_ascii=False)
-                        print(f"[{len(results)}/{len(detail_links)}] Saved {data['course_name']} {data['course_number']}")
+                        print(f"[{len(results)}/{len(detail_links)}] Saved {data['course_name']} {data['course_number']} - {data['course_title']}")
 
-                    # Cooldown pause every 40 courses to respect CloudFront's 5-minute rolling window
                     if count % 40 == 0:
                         print("\n[Cooldown] Pausing 45 seconds to reset CloudFront request window...\n")
                         await asyncio.sleep(45)

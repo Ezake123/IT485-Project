@@ -7,6 +7,7 @@ let currentModalSections = [];
 let activeModalCourse = null;
 let activeModalSectionIndex = 0;
 let customCourseCounter = 1;
+let openReqGroups = new Set(); // Tracks expanded state for requirement groups
 
 window.candidatePool = candidatePool;
 window.lockedSections = lockedSections;
@@ -161,7 +162,7 @@ function verifyPoolComplexity() {
 }
 
 // =================================================================
-// 3. GROUPED CANDIDATE POOL & LOCKED SECTIONS MANAGEMENT
+// 3. GROUPED CANDIDATE POOL & ACCORDION MANAGEMENT
 // =================================================================
 function getSectionKey(sec) {
     const code = String(sec.class_code || '');
@@ -190,6 +191,37 @@ function countLockedDistinctForGroup(gid) {
     return distinct.size;
 }
 
+// Accordion Toggles
+function toggleAuditAccordion(contentId, triggerElem) {
+    const content = document.getElementById(contentId);
+    if (!content) return;
+    const isCurrentlyCollapsed = content.classList.contains('collapsed');
+    content.classList.toggle('collapsed', !isCurrentlyCollapsed);
+    const arrow = triggerElem.querySelector('.accordion-arrow');
+    if (arrow) {
+        arrow.classList.toggle('arrow-rotated', isCurrentlyCollapsed);
+    }
+}
+
+function toggleReqGroup(gid) {
+    const grid = document.getElementById(`group-grid-${gid}`);
+    const arrow = document.getElementById(`group-arrow-${gid}`);
+    if (!grid) return;
+
+    // Read the actual DOM state instead of assuming openReqGroups is in sync
+    const isCurrentlyOpen = !grid.classList.contains('collapsed');
+    const willBeOpen = !isCurrentlyOpen;
+
+    grid.classList.toggle('collapsed', !willBeOpen);
+    if (arrow) arrow.classList.toggle('arrow-rotated', willBeOpen);
+
+    if (willBeOpen) {
+        openReqGroups.add(gid);
+    } else {
+        openReqGroups.delete(gid);
+    }
+}
+
 function renderLockedCard(course, section) {
     const emptyLocked = document.getElementById('emptyLockedMsg');
     if (emptyLocked) emptyLocked.remove();
@@ -213,19 +245,22 @@ function renderLockedCard(course, section) {
         ? `${formatTimeTo12Hour(section.start_time)} - ${formatTimeTo12Hour(section.end_time)}` 
         : 'Asynchronous';
     const isCustom = String(section.class_code).startsWith('CUST-') || Boolean(course.is_custom);
+    
+    // FIX 5: Display course title instead of description
+    const displayTitle = course.course_title || course.name || `${course.subject_code} ${course.course_number}`;
 
     card.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+        <div class="card-header-flex">
             <div class="candidate-code">${course.subject_code} ${course.course_number} <span class="locked-badge-pill">Sec ${section.section}</span></div>
-            <div style="display: flex; gap: 6px; align-items: center;">
+            <div class="candidate-actions">
                 ${isCustom 
                     ? `<button type="button" class="btn-details" onclick="openCustomModal('${section.class_code}')">Edit</button>` 
-                    : `<button type="button" class="btn-details" onclick="openCourseModal('${course.subject_code}', '${course.course_number}', '${section.section}')">Details</button>`}
+                    : `<button type="button" class="btn-details" onclick="openCourseModal('${course.subject_code}', '${course.course_number}', '${section.section}', '${(displayTitle).replace(/'/g, "\\'")}')">Details</button>`}
                 <button type="button" class="btn-remove-pool" onclick="unlockSection('${section.class_code}', '${section.term || getActiveTerm()}')" title="Unlock and return to course pool">✕</button>
             </div>
         </div>
-        <div class="candidate-name" title="${course.name}">${course.name}</div>
-        <div class="candidate-meta" style="margin-top: 4px;">
+        <div class="candidate-name" title="${displayTitle}">${displayTitle}</div>
+        <div class="candidate-meta meta-top-spacing">
             <span>${daysStr} (${timeStr})</span>
             <span>#${section.class_code}</span>
         </div>
@@ -272,7 +307,6 @@ function renderCandidatePoolUI() {
 
     const groupNeededMap = getGroupNeededMap();
 
-    // Group courses by req_id
     const grouped = {};
     candidatePool.forEach(c => {
         const gid = c.req_id || "user-added";
@@ -301,34 +335,47 @@ function renderCandidatePoolUI() {
             netNeeded = Math.max(0, grp.baseNeeded - lockedCount);
         }
 
-        // If requirement is satisfied, hide this group from the pool
         if (netNeeded <= 0) {
             return;
         }
 
         totalVisibleCourses += grp.courses.length;
 
+        const totalGroupCourses = grp.courses.length;
+        const totalGroupSections = grp.courses.reduce((sum, item) => sum + (parseInt(item.sections_count, 10) || 0), 0);
+        const isOpen = openReqGroups.has(gid);
+
         html += `
-            <div class="candidate-group-block" id="group-block-${gid}" data-req-id="${gid}">
-                <div class="candidate-group-header">
-                    <span class="candidate-group-title">🎯 ${grp.name}</span>
-                    <span class="meta-pill pill-req">Need ${netNeeded}</span>
+            <div class="candidate-group-block" id="group-block-${gid}" data-req-id="${gid}" data-total-courses="${totalGroupCourses}" data-total-sections="${totalGroupSections}">
+                <div class="candidate-group-header clickable" onclick="toggleReqGroup('${gid}')" role="button" tabindex="0">
+                    <div class="group-header-left">
+                        <span class="candidate-group-title">${grp.name}</span>
+                        <span class="meta-pill pill-req">Need ${netNeeded}</span>
+                    </div>
+                    <div class="group-header-right">
+                        <span class="meta-pill pill-neutral pill-course-count">${totalGroupCourses} Course${totalGroupCourses === 1 ? '' : 's'}</span>
+                        <span class="meta-pill pill-neutral pill-section-count">${totalGroupSections} Section${totalGroupSections === 1 ? '' : 's'}</span>
+                        <span class="accordion-arrow ${isOpen ? 'arrow-rotated' : ''}" id="group-arrow-${gid}">▼</span>
+                    </div>
                 </div>
-                <div class="candidate-group-grid">
+                <div class="candidate-group-grid ${isOpen ? '' : 'collapsed'}" id="group-grid-${gid}">
         `;
 
         grp.courses.forEach(c => {
-            const safeTitle = (c.name || '').replace(/"/g, '&quot;');
+            const courseTitle = c.course_title || c.name || `${c.subject_code} ${c.course_number}`;
+            const safeTitle = courseTitle.replace(/"/g, '&quot;');
+            const secCount = parseInt(c.sections_count, 10) || 1;
             html += `
                 <div class="candidate-item-card" 
                      id="candidate-card-${c.subject_code}-${c.course_number}"
                      data-code="${c.subject_code} ${c.course_number}"
                      data-dept="${c.subject_code}"
-                     data-num="${c.course_number}">
+                     data-num="${c.course_number}"
+                     data-sections-count="${secCount}">
                     <div class="card-header-flex">
                         <div class="candidate-code">${c.subject_code} ${c.course_number}</div>
-                        <div class="candidate-actions flex-align-center">
-                            <button type="button" class="btn-details" onclick="openCourseModal('${c.subject_code}', '${c.course_number}')">Details</button>
+                        <div class="candidate-actions">
+                            <button type="button" class="btn-details" onclick="openCourseModal('${c.subject_code}', '${c.course_number}', null, '${safeTitle.replace(/'/g, "\\'")}')">Details</button>
                             <button type="button" class="btn-remove-pool" onclick="removeCourseFromPool('${c.subject_code}', '${c.course_number}')" title="Remove from generator pool">✕</button>
                         </div>
                     </div>
@@ -399,7 +446,8 @@ function lockSection(dept, num, sectionData) {
         courseData = {
             subject_code: activeModalCourse.subject_code,
             course_number: activeModalCourse.course_number,
-            name: activeModalCourse.name || `${activeModalCourse.subject_code} ${activeModalCourse.course_number}`,
+            name: activeModalCourse.course_title || `${activeModalCourse.subject_code} ${activeModalCourse.course_number}`,
+            course_title: activeModalCourse.course_title || `${activeModalCourse.subject_code} ${activeModalCourse.course_number}`,
             credits: activeModalCourse.credits || 3,
             sections_count: activeModalCourse.sections_count || 1,
             req_id: "user-added",
@@ -417,7 +465,6 @@ function lockSection(dept, num, sectionData) {
 
     renderAllLockedSections();
 
-    // Check if course has both lecture and discussion requirements
     const selectElem = document.getElementById(`section-select-${dept}-${num}`);
     let allSections = [];
     if (selectElem && selectElem.dataset.sectionsJson) {
@@ -517,7 +564,6 @@ function addCourseToPool(courseData, btnElement) {
     );
     if (exists || isLocked) return;
 
-    // Check if course belongs to an audit requirement group
     let fullCourse = null;
     if (Array.isArray(window.MASTER_CATALOG_CANDIDATES)) {
         fullCourse = window.MASTER_CATALOG_CANDIDATES.find(c => 
@@ -690,7 +736,6 @@ function initCandidatePool() {
         lockedSections = [];
     }
 
-    // Populate initial pool from master candidates
     if (Array.isArray(window.MASTER_CATALOG_CANDIDATES) && window.MASTER_CATALOG_CANDIDATES.length > 0) {
         candidatePool = JSON.parse(JSON.stringify(window.MASTER_CATALOG_CANDIDATES));
     } else {
@@ -829,6 +874,7 @@ function submitCustomSection() {
     const customCourseObj = {
         subject_code: deptVal,
         course_number: numVal,
+        course_title: `Custom Added Course (${deptVal} ${numVal})`,
         name: `Custom Added Course (${deptVal} ${numVal})`,
         credits: 3,
         sections_count: 1,
@@ -985,12 +1031,15 @@ function executeCatalogSearch() {
         fetch(`/api/courses?${params.toString()}`, { signal: searchAbortController.signal })
             .then(res => res.json())
             .then(data => {
+                // Filter out any courses with 0 sections
+                data = data.filter(c => (c.sections_count || 0) > 0);
+
                 currentSearchResults = data;
                 if (catalogCountBadge) catalogCountBadge.textContent = `${data.length} Found`;
                 if (!resultsList) return;
 
                 if (data.length === 0) {
-                    resultsList.innerHTML = `<div class="empty-placeholder" style="grid-column: 1 / -1;">No matching courses found in catalog for ${activeTerm}.</div>`;
+                    resultsList.innerHTML = `<div class="empty-placeholder" style="grid-column: 1 / -1;">No matching courses with active sections found in catalog for ${activeTerm}.</div>`;
                     return;
                 }
 
@@ -1013,21 +1062,24 @@ function executeCatalogSearch() {
                     const isLocked = lockedSet.has(courseKey);
                     const isAdded = inPool || isLocked;
                     const isAlreadyCompleted = completedSet.has(compactKey);
-                    const safeTitle = (c.description || '').replace(/"/g, '&quot;');
+                    // FIX 5: Use course_title instead of description
+                    const courseTitle = c.course_title || c.name || `${c.subject_code} ${c.course_number}`;
+                    const safeTitle = courseTitle.replace(/"/g, '&quot;');
 
                     return `
                         <div class="candidate-item-card">
-                            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <div class="card-header-flex">
                                 <div class="candidate-code">${c.code}</div>
-                                <div style="display: flex; gap: 6px; align-items: center;">
-                                    <button type="button" class="btn-details" onclick="openCourseModal('${c.subject_code}', '${c.course_number}')">Details</button>
+                                <div class="candidate-actions">
+                                    <button type="button" class="btn-details" onclick="openCourseModal('${c.subject_code}', '${c.course_number}', null, '${safeTitle.replace(/'/g, "\\'")}')">Details</button>
                                     <button type="button" class="btn-add-pool ${isAdded ? 'added' : ''}" 
                                             onclick="addCourseByIndex(${idx}, this)" ${isAdded ? 'disabled' : ''}>
                                         ${isAdded ? (isLocked ? 'Locked' : 'In Pool') : '+ Add'}
                                     </button>
                                 </div>
                             </div>
-                            <div class="candidate-name" style="font-size: 11px; color: #475569; margin: 4px 0;">${safeTitle}</div>
+                            
+                            <div class="candidate-name" title="${safeTitle}">${safeTitle}</div>
                             
                             ${isAlreadyCompleted ? `
                                 <div class="completed-warning-card">
@@ -1037,7 +1089,7 @@ function executeCatalogSearch() {
 
                             <div class="candidate-meta">
                                 <span class="meta-pill pill-blue">${c.credits} cr</span>
-                                <span class="meta-pill">${c.gen_ed !== 'None' ? c.gen_ed : 'No Gen Ed'}</span>
+                                <span class="meta-pill" title="${c.gen_ed}">${c.gen_ed !== 'None' ? c.gen_ed : 'No Gen Ed'}</span>
                                 <span>${c.sections_count} sections</span>
                             </div>
                         </div>
@@ -1158,20 +1210,24 @@ function renderTimetableGrid() {
 }
 
 // =================================================================
-// 7. COURSE DETAILS MODAL LOGIC
+// 7. COURSE DETAILS MODAL LOGIC (FIX 4: CS 110 - Intro to computers)
 // =================================================================
-function openCourseModal(dept, num, targetSection = null) {
+function openCourseModal(dept, num, targetSection = null, preloadedTitle = null) {
     const modal = document.getElementById('courseDetailsModal');
     if (!modal) return;
 
     activeModalCourse = { 
         subject_code: String(dept).trim().toUpperCase(), 
-        course_number: String(num).trim().toUpperCase() 
+        course_number: String(num).trim().toUpperCase(),
+        course_title: preloadedTitle || ""
     };
     activeModalSectionIndex = 0;
 
     modal.style.display = 'flex';
-    document.getElementById('modalCourseTitle').textContent = `${dept} ${num}`;
+    
+    // Display course name + number (- course_title if already available)
+    const initialTitle = preloadedTitle ? `${dept} ${num} - ${preloadedTitle}` : `${dept} ${num}`;
+    document.getElementById('modalCourseTitle').textContent = initialTitle;
     document.getElementById('modalCourseMeta').textContent = 'Loading section details...';
     document.getElementById('modalCourseDesc').textContent = '';
     document.getElementById('modalSectionTabs').innerHTML = '';
@@ -1186,7 +1242,16 @@ function openCourseModal(dept, num, targetSection = null) {
                 return;
             }
 
-            activeModalCourse.name = data.description;
+            // FIX 4: Update title with full course title from catalog
+            const resolvedTitle = data.course_title || preloadedTitle;
+            if (resolvedTitle && resolvedTitle.toLowerCase() !== `${dept} ${num}`.toLowerCase()) {
+                document.getElementById('modalCourseTitle').textContent = `${dept} ${num} - ${resolvedTitle}`;
+            } else {
+                document.getElementById('modalCourseTitle').textContent = `${dept} ${num}`;
+            }
+
+            activeModalCourse.name = resolvedTitle || data.description;
+            activeModalCourse.course_title = resolvedTitle;
             activeModalCourse.credits = data.sections.length ? data.sections[0].credits : 3;
             activeModalCourse.sections_count = data.sections.length;
 
@@ -1403,9 +1468,7 @@ function copyClassCode(buttonElement, classCode) {
     });
 }
 
-// =================================================================
-// 8. BIND GLOBAL INTERFACE TO WINDOW
-// =================================================================
+// Global window assignments
 window.openCourseModal = openCourseModal;
 window.closeCourseModal = closeCourseModal;
 window.switchSectionTab = switchSectionTab;
@@ -1421,10 +1484,10 @@ window.onGenEdChange = onGenEdChange;
 window.openCustomModal = openCustomModal;
 window.closeCustomModal = closeCustomModal;
 window.submitCustomSection = submitCustomSection;
+window.toggleAuditAccordion = toggleAuditAccordion;
+window.toggleReqGroup = toggleReqGroup;
 
-// =================================================================
-// 9. APP INITIALIZATION & EVENT LISTENERS ON DOM LOAD
-// =================================================================
+// DOMContentLoaded
 document.addEventListener('DOMContentLoaded', () => {
     initCandidatePool();
     renderTimetableGrid();
@@ -1486,33 +1549,97 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const searchInput = document.getElementById('candidateSearchInput');
+    let preSearchOpenGroups = null; // Stores user's layout snapshot before searching
+
     if (searchInput) {
         searchInput.addEventListener('input', function() {
             const query = this.value.trim().toLowerCase();
             const queryCompact = query.replace(/\s+/g, '');
-            const cards = document.querySelectorAll('#candidateList .candidate-item-card');
-            let visibleCount = 0;
+            const groupBlocks = document.querySelectorAll('.candidate-group-block');
+            let totalVisibleCourses = 0;
 
-            cards.forEach(card => {
-                const rawCode = (card.getAttribute('data-code') || '').toLowerCase();
-                const compactCode = rawCode.replace(/\s+/g, '');
-
-                if (!query || rawCode.includes(query) || compactCode.includes(queryCompact)) {
-                    card.style.display = 'block';
-                    visibleCount++;
-                } else {
-                    card.style.display = 'none';
+            if (query) {
+                // Take a snapshot on the very first character typed
+                if (preSearchOpenGroups === null) {
+                    preSearchOpenGroups = new Set(openReqGroups);
                 }
-            });
 
-            document.querySelectorAll('.candidate-group-block').forEach(block => {
-                const visibleCards = block.querySelectorAll('.candidate-item-card:not([style*="display: none"])');
-                block.style.display = visibleCards.length > 0 ? 'block' : 'none';
-            });
+                groupBlocks.forEach(block => {
+                    const gid = block.getAttribute('data-req-id');
+                    const cards = block.querySelectorAll('.candidate-item-card');
+                    const grid = block.querySelector('.candidate-group-grid');
+                    const arrow = block.querySelector('.accordion-arrow');
+                    const courseCountPill = block.querySelector('.pill-course-count');
+                    const sectionCountPill = block.querySelector('.pill-section-count');
+
+                    let matchingCourses = 0;
+                    let matchingSections = 0;
+
+                    cards.forEach(card => {
+                        const rawCode = (card.getAttribute('data-code') || '').toLowerCase();
+                        const compactCode = rawCode.replace(/\s+/g, '');
+                        const cardTitle = (card.querySelector('.candidate-name')?.textContent || '').toLowerCase();
+                        const secs = parseInt(card.getAttribute('data-sections-count'), 10) || 1;
+
+                        if (rawCode.includes(query) || compactCode.includes(queryCompact) || cardTitle.includes(query)) {
+                            card.style.display = 'block';
+                            matchingCourses++;
+                            matchingSections += secs;
+                            totalVisibleCourses++;
+                        } else {
+                            card.style.display = 'none';
+                        }
+                    });
+
+                    if (matchingCourses > 0) {
+                        block.style.display = 'block';
+                        // Expand matching group during search
+                        if (grid) grid.classList.remove('collapsed');
+                        if (arrow) arrow.classList.add('arrow-rotated');
+
+                        // Keep counts consistent with search results
+                        if (courseCountPill) courseCountPill.textContent = `${matchingCourses} Course${matchingCourses === 1 ? '' : 's'}`;
+                        if (sectionCountPill) sectionCountPill.textContent = `${matchingSections} Section${matchingSections === 1 ? '' : 's'}`;
+                    } else {
+                        block.style.display = 'none';
+                    }
+                });
+            } else {
+                // Search cleared: Restore snapshot of user's layout
+                if (preSearchOpenGroups !== null) {
+                    openReqGroups = new Set(preSearchOpenGroups);
+                    preSearchOpenGroups = null;
+                }
+
+                groupBlocks.forEach(block => {
+                    const gid = block.getAttribute('data-req-id');
+                    const cards = block.querySelectorAll('.candidate-item-card');
+                    const grid = block.querySelector('.candidate-group-grid');
+                    const arrow = block.querySelector('.accordion-arrow');
+                    const courseCountPill = block.querySelector('.pill-course-count');
+                    const sectionCountPill = block.querySelector('.pill-section-count');
+
+                    // Reset all cards to visible
+                    cards.forEach(card => card.style.display = 'block');
+                    block.style.display = 'block';
+                    totalVisibleCourses += cards.length;
+
+                    // Revert to original pre-search expand/collapse state
+                    const shouldBeOpen = openReqGroups.has(gid);
+                    if (grid) grid.classList.toggle('collapsed', !shouldBeOpen);
+                    if (arrow) arrow.classList.toggle('arrow-rotated', shouldBeOpen);
+
+                    // Revert course & section counts to their full totals
+                    const totalCourses = block.getAttribute('data-total-courses');
+                    const totalSections = block.getAttribute('data-total-sections');
+                    if (courseCountPill && totalCourses) courseCountPill.textContent = `${totalCourses} Course${totalCourses === '1' ? '' : 's'}`;
+                    if (sectionCountPill && totalSections) sectionCountPill.textContent = `${totalSections} Section${totalSections === '1' ? '' : 's'}`;
+                });
+            }
 
             const countBadge = document.getElementById('candidateCount');
             if (countBadge) {
-                countBadge.textContent = `${visibleCount} Courses`;
+                countBadge.textContent = `${totalVisibleCourses} Courses`;
             }
         });
     }
@@ -1542,11 +1669,7 @@ document.addEventListener('DOMContentLoaded', () => {
         targetCountInput.addEventListener('input', verifyPoolComplexity);
     }
 
-    // -----------------------------------------------------------------
-    // Scroll Restoration & Result Anchoring on Form Submit
-    // -----------------------------------------------------------------
     const restrictionsForm = document.querySelector('form.restrictions-card');
-
     if (restrictionsForm) {
         restrictionsForm.addEventListener('submit', () => {
             sessionStorage.setItem('planner_scroll_pos', window.scrollY);
@@ -1559,10 +1682,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const timetableElem = document.getElementById('timetableSection');
         if (timetableElem) {
-            // If a schedule was generated, scroll right to the timetable output
             timetableElem.scrollIntoView({ behavior: 'smooth', block: 'start' });
         } else {
-            // Otherwise, restore the exact scroll position before submission
             window.scrollTo({
                 top: parseInt(savedScrollPos, 10),
                 behavior: 'instant'
@@ -1570,14 +1691,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // -----------------------------------------------------------------
-    // Floating Back to Top Button Logic
-    // -----------------------------------------------------------------
     const backToTopBtn = document.getElementById('btnBackToTop');
-
     if (backToTopBtn) {
         window.addEventListener('scroll', () => {
-            // Reveal button once the user scrolls down 300px
             if (window.scrollY > 300) {
                 backToTopBtn.classList.add('show');
             } else {

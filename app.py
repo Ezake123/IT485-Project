@@ -44,7 +44,6 @@ app = Flask(__name__)
 if Compress:
     Compress(app)
 
-# 100 KB upload limit for degree audits
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -53,9 +52,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if (SUPABASE_URL an
 
 PAGE_SIZE = 1000
 
-#-----------------------------------------------------------------
-# Calculates the active semester default (excludes summer/winter)
-#-----------------------------------------------------------------
 def get_default_term_info() -> tuple[str, int]:
     now = datetime.now()
     month = now.month
@@ -68,9 +64,6 @@ def get_default_term_info() -> tuple[str, int]:
     else:
         return "Fall", year
 
-#-----------------------------------------------------------------
-# Prerequisite & String Normalization Helpers
-#-----------------------------------------------------------------
 PREREQ_ALTERNATIVE_RE = re.compile(
     r"permission|consent|approval|instructor|placement|aleks|score|equivalent|"
     r"or higher|may not register|class note|see note|department",
@@ -139,12 +132,8 @@ def short_prereq_reason(course_id: str, catalog: CatalogManager, completed_set, 
         reason += " (or " + " or ".join(alternatives) + ")"
     return reason
 
-#-----------------------------------------------------------------
-# Optimized Database Fetching & Caching
-#-----------------------------------------------------------------
 @lru_cache(maxsize=1)
 def fetch_all_courses_catalog() -> list[dict]:
-    """Caches base catalog course definitions across terms to prevent redundant fetches."""
     if not supabase:
         raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY.")
     courses = []
@@ -159,7 +148,6 @@ def fetch_all_courses_catalog() -> list[dict]:
 
 @lru_cache(maxsize=8)
 def load_catalog_for_term(term: str = None) -> CatalogManager:
-    """Loads sections for the specific term and combines with catalog definitions."""
     if not supabase:
         raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY.")
 
@@ -169,7 +157,6 @@ def load_catalog_for_term(term: str = None) -> CatalogManager:
 
     all_courses = fetch_all_courses_catalog()
 
-    # Query sections matching term variants
     parts = clean_term.split()
     sections = []
     page = 0
@@ -188,9 +175,17 @@ def load_catalog_for_term(term: str = None) -> CatalogManager:
         page += 1
 
     print(f"[+] Loaded {len(all_courses)} courses and {len(sections)} sections into memory for '{clean_term}'.")
-    return CatalogManager.load_from_supabase_data(all_courses, sections)
+    manager = CatalogManager.load_from_supabase_data(all_courses, sections)
 
-# Pre-warm catalog cache at startup
+    # Hydrate course_title onto Course objects
+    for r in all_courses:
+        cid = f"{str(r.get('course_name', '')).strip()}{str(r.get('course_number', '')).strip()}".upper()
+        c_obj = manager.get_course(cid)
+        if c_obj:
+            c_obj.course_title = r.get("course_title") or f"{r.get('course_name', '')} {r.get('course_number', '')}"
+
+    return manager
+
 if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
     with app.app_context():
         init_season, init_year = get_default_term_info()
@@ -203,9 +198,6 @@ if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
             except Exception as e:
                 print(f"[!] Warning: Pre-warm attempt {attempt + 1} failed: {e}")
 
-#-----------------------------------------------------------------
-# Extracts candidate courses pool grouped by audit requirement
-#-----------------------------------------------------------------
 def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
     seen_ids = set()
     candidate_list = []
@@ -237,10 +229,12 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
                             sections = catalog.get_sections(cid_clean)
                             if sections:
                                 seen_ids.add(cid_clean)
+                                title_val = getattr(course, "course_title", None) or f"{course.course_name} {course.course_number}"
                                 candidate_list.append({
                                     "subject_code": course.course_name.strip(),
                                     "course_number": course.course_number.strip(),
-                                    "name": getattr(course, "description", None) or f"{course.course_name} {course.course_number}",
+                                    "course_title": title_val,
+                                    "name": title_val,
                                     "credits": sections[0].credits if sections else 3,
                                     "sections_count": len(sections),
                                     "sections": format_sections_payload(sections),
@@ -266,11 +260,13 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
                         raw_cname = getattr(course_obj, "course_name", cid_clean).strip()
                         raw_cnum = getattr(course_obj, "course_number", "").strip()
                         dept_clean = re.sub(r'\d+[A-Za-z]?$', '', raw_cname).strip() if raw_cnum and raw_cname.endswith(raw_cnum) else raw_cname
+                        title_val = getattr(course_obj, "course_title", None) or f"{dept_clean} {raw_cnum}"
 
                         candidate_list.append({
                             "subject_code": dept_clean if dept_clean else cid_clean,
                             "course_number": raw_cnum,
-                            "name": getattr(course_obj, "description", raw_cname) or raw_cname,
+                            "course_title": title_val,
+                            "name": title_val,
                             "credits": credits_val,
                             "sections_count": len(sections),
                             "sections": format_sections_payload(sections),
@@ -280,9 +276,6 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
     candidate_list.sort(key=lambda c: (c.get("req_id", ""), c["subject_code"], c["course_number"]))
     return candidate_list
 
-#-----------------------------------------------------------------
-# Degree Audit Scanning & Processing
-#-----------------------------------------------------------------
 def parse_audit_pdf(file_stream):
     audit = []
     with pdfplumber.open(file_stream) as pdf:
@@ -364,9 +357,6 @@ def describe_wildcards(tokens: list[str]) -> list[str]:
 
     return parts + ranges + other_tokens
 
-#-----------------------------------------------------------------
-# API Endpoints
-#-----------------------------------------------------------------
 @app.route("/healthz", methods=["GET"])
 def health_check():
     return "OK", 200
@@ -417,13 +407,20 @@ def search_all_courses():
 
         if text_match and gened_match:
             secs = getattr(course, "sections", [])
-            credits_val = secs[0].credits if (secs and hasattr(secs[0], "credits") and secs[0].credits > 0) else 3
+            
+            # Skip any course that has 0 active sections offered for this term
+            if not secs or len(secs) == 0:
+                continue
+
+            credits_val = secs[0].credits if (hasattr(secs[0], "credits") and secs[0].credits > 0) else 3
+            c_title = getattr(course, "course_title", None) or f"{dept} {num}"
 
             results.append({
                 "code": f"{dept} {num}",
                 "subject_code": dept,
                 "course_number": num,
-                "name": getattr(course, "description", None) or f"{dept} {num}",
+                "course_title": c_title,
+                "name": c_title,
                 "description": course.description or "No description available.",
                 "gen_ed": course.gen_ed or "None",
                 "credits": credits_val,
@@ -432,7 +429,7 @@ def search_all_courses():
             })
             if len(results) >= 120:
                 break
-
+                
     return jsonify(results)
 
 @app.route("/api/course-sections", methods=["GET"])
@@ -451,7 +448,6 @@ def get_course_sections_detail():
     course_obj = catalog.get_course(course_id)
     raw_sections = catalog.get_sections(course_id)
 
-    # Filter sections by composite term identity
     target_clean = term.strip().lower()
     sections_payload = []
     for s in raw_sections:
@@ -473,19 +469,18 @@ def get_course_sections_detail():
         })
 
     sections_payload.sort(key=lambda x: x["section"])
+    c_title = getattr(course_obj, "course_title", None) or f"{course_name} {course_number}"
 
     return jsonify({
         "course_name": course_name,
         "course_number": course_number,
+        "course_title": c_title,
         "description": getattr(course_obj, "description", "No description available.") or "No description available.",
         "gen_ed": getattr(course_obj, "gen_ed", "None") or "None",
         "prerequisites": prereq_text_for(course_obj),
         "sections": sections_payload
     })
 
-#-----------------------------------------------------------------
-# Web Views & Schedule Solver Controller
-#-----------------------------------------------------------------
 @app.errorhandler(RequestEntityTooLarge)
 def handle_file_too_large(e):
     def_season, def_year = get_default_term_info()
@@ -522,6 +517,14 @@ def handle_file_too_large(e):
 def index():
     return render_template('index.html')
 
+@app.route("/help", methods=["GET"])
+def help_page():
+    return render_template("help.html")
+
+@app.route("/faq", methods=["GET"])
+def faq_page():
+    return render_template("faq.html")
+    
 @app.route("/planner", methods=["GET", "POST"])
 def planner():
     def_season, def_year = get_default_term_info()
@@ -712,7 +715,6 @@ def planner():
                 priority_reqs = []
                 pool_reqs = []
 
-                # Handle lecture/discussion pairing when one component is locked
                 locked_course_map = {}
                 for s in locked_sec_objs:
                     c_tag = f"{s.course_name.strip()}{s.course_number.strip()}".upper()
@@ -804,6 +806,7 @@ def planner():
                                 "class_code": sec.class_code,
                                 "course_name": sec.course_name,
                                 "course_number": sec.course_number,
+                                "course_title": "Custom Course",
                                 "section": sec.section,
                                 "location": "Self-Enrolled",
                                 "instructors": ["N/A"],
@@ -819,10 +822,12 @@ def planner():
                             })
                         else:
                             course_meta = catalog.get_course(sec.course_id)
+                            c_title = getattr(course_meta, "course_title", None) or f"{sec.course_name} {sec.course_number}"
                             schedule.append({
                                 "class_code": sec.class_code,
                                 "course_name": sec.course_name,
                                 "course_number": sec.course_number,
+                                "course_title": c_title,
                                 "section": sec.section,
                                 "location": sec.location or ("Online Asynchronous" if sec.is_online else "Room TBA"),
                                 "instructors": sec.instructors or ["TBA"],
@@ -862,7 +867,6 @@ def planner():
             return True
         return False
 
-    # Process audit display structures (drops wildcard duplication when concrete options exist)
     for req in serialized_reqs:
         units = req.get("units", [])
         needed = req.get("courses_needed", 1)
@@ -897,10 +901,12 @@ def planner():
             "is_gened": True
         })
 
-    if catalog is None:
-        term_notice = "The course catalog couldn't be loaded right now. Please try again in a minute."
-    elif not catalog.sections:
-        term_notice = f"{selected_term} classes aren't in ClassPick yet, so there's nothing to schedule."
+    # FIX 1: Don't show term notice until user actually scans an audit or enters manually
+    if is_scanned:
+        if catalog is None:
+            term_notice = "The course catalog couldn't be loaded right now. Please try again in a minute."
+        elif not catalog.sections:
+            term_notice = f"{selected_term} classes aren't in ClassPick yet, so there's nothing to schedule."
 
     return render_template(
         "planner.html",
