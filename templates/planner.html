@@ -124,7 +124,7 @@
                     </div>
 
                     <div class="audit-stacked-container">
-                        <!-- Collapsible 1: Completed Courses (RESTORED) -->
+                        <!-- Collapsible 1: Completed Courses -->
                         <div class="audit-collapse-block">
                             <div class="audit-collapse-trigger" onclick="toggleAuditAccordion('completedAccordion', this)" role="button" tabindex="0">
                                 <span class="audit-trigger-title">Completed Courses</span>
@@ -173,34 +173,39 @@
                                 {% endfor %}
                             </div>
                         </div>
-                    </div>
 
-                    <div class="gened-audit-box">
-                        <div class="gened-audit-header">
-                            <span>General Education and Elective Requirements Needed</span>
-                            <span class="box-count">{{ manual_choice_requirements|length }} Remaining</span>
-                        </div>
-
-                        <div class="gened-audit-notice">
-                            <strong>Reminder:</strong> General Education and elective choices are not added automatically. Use <strong>Search All University Courses</strong> below to add your preferred electives.
-                        </div>
-
-                        <div class="gened-audit-grid">
-                            {% for item in manual_choice_requirements %}
-                                <div class="gened-card-item">
-                                    <div class="gened-card-title">{{ item.group_name }}</div>
-                                    <div class="gened-card-needed">
-                                        Needs <strong>{{ item.needed }}</strong> course{{ 's' if item.needed > 1 else '' }}
-                                    </div>
+                        <!-- Collapsible 3: General Education and Elective Requirements Needed (Open by Default) -->
+                        <div class="audit-collapse-block">
+                            <div class="audit-collapse-trigger" onclick="toggleAuditAccordion('genEdAccordion', this)" role="button" tabindex="0">
+                                <span class="audit-trigger-title">General Education and Elective Requirements Needed</span>
+                                <div class="audit-trigger-meta">
+                                    <span class="meta-pill pill-count">{{ manual_choice_requirements|length }} Remaining</span>
+                                    <span class="accordion-arrow arrow-rotated">▼</span>
                                 </div>
-                            {% else %}
-                                <div class="empty-gened-text">
-                                    All General Education and elective requirements appear satisfied.
+                            </div>
+                            <div id="genEdAccordion" class="audit-collapse-body">
+                                <div class="gened-audit-notice">
+                                    <strong>Reminder:</strong> General Education and elective choices are not added automatically. Use <strong>Search All University Courses</strong> below to add your preferred electives.
                                 </div>
-                            {% endfor %}
+
+                                <div class="gened-audit-grid">
+                                    {% for item in manual_choice_requirements %}
+                                        <div class="gened-card-item">
+                                            <div class="gened-card-title">{{ item.group_name }}</div>
+                                            <div class="gened-card-needed">
+                                                Needs <strong>{{ item.needed }}</strong> course{{ 's' if item.needed > 1 else '' }}
+                                            </div>
+                                        </div>
+                                    {% else %}
+                                        <div class="empty-gened-text">
+                                            All General Education and elective requirements appear satisfied.
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
                         </div>
                     </div>
-                </div>
+                </div>    
             {% endif %}
 
             <!-- STEP 3: ELIGIBLE GENERATOR COURSE POOL -->

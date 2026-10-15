@@ -1382,6 +1382,7 @@ input[type="file"] {
     margin-bottom: 0.75rem;
 }
 
+/* Gen Ed Content inside Accordion */
 .gened-audit-notice {
     background-color: #eff6ff;
     border-left: 0.25rem solid var(--umb-blue);
@@ -1430,6 +1431,7 @@ input[type="file"] {
     color: #64748b;
     font-size: 0.8125rem;
     font-style: italic;
+    padding: 0.25rem 0;
 }
 
 /* Candidate Pool & Catalog Panels */

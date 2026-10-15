@@ -77,6 +77,51 @@
                 </div>
             </div>
             
+            <!-- Unincluded Course Requirements & Manual Electives FAQ Category -->
+            <div class="faq-category-card" id="faq-unincluded-requirements">
+                <div class="faq-category-header">
+                    <span class="faq-category-title">Scope Limits & Manual Elective Selection</span>
+                </div>
+                <div class="faq-category-body">
+                    <div class="faq-nested-group">
+
+                        <!-- Question 1: Diversity Requirements -->
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Why doesn't ClassPick automatically solve United States or International Diversity requirements?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>The university's public course catalog feeds indicate General Education distribution codes (such as Humanities, Arts, or Natural Sciences), but they do not publish a standardized data attribute tagging whether a section fulfills the <strong>United States Diversity</strong> or <strong>International Diversity</strong> requirement. Because this metadata is absent from the underlying course database, ClassPick cannot verify or solve diversity designations algorithmically without risking false guarantees. Students should verify approved diversity attributes in WISER or consult their academic advisor.</p>
+                            </div>
+                        </div>
+
+                        <!-- Question 2: Why Gen Eds and Electives require manual addition -->
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Why do I need to manually add courses for "General Education and Elective Requirements Needed"?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Major-specific requirements (like Computer Science or Accounting cores) offer tightly defined course lists (e.g., <em>"Choose from CS 210, CS 240"</em> or <em>"AF 310, AF 311"</em>), which the solver can place directly into your candidate pool. In contrast, General Education distribution areas (such as Humanities or Social &amp; Behavioral Sciences) encompass hundreds of completely distinct subjects across campus. Automatically loading every possible university elective into the solver would overwhelm your course pool with unrelated classes you have no interest in taking. ClassPick displays your remaining elective counts as a checklist in the audit summary so you can use the <strong>Search All University Courses</strong> tool to choose specific electives that fit your personal academic goals.</p>
+                            </div>
+                        </div>
+
+                        <!-- Question 3: Non-Course Graduation Requirements -->
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Why are non-course milestones like MAP miles or Writing Proficiency portfolios excluded?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Milestones such as the <strong>Management Achievement Program (MAP)</strong> miles, <strong>Writing Proficiency Requirement (WPR/EPR)</strong> portfolios, and minimum GPA checks are non-course degree benchmarks rather than credit-bearing classroom sections. Because they do not have weekly meeting days, times, or section codes, they cannot be placed on a schedule timetable. ClassPick tracks course scheduling, while tracking non-course milestones remains managed in WISER.</p>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
             <!-- Prerequisites & Course Eligibility FAQ Category -->
             <div class="faq-category-card" id="faq-prerequisites">
                 <div class="faq-category-header">
