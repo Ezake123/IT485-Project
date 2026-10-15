@@ -1434,6 +1434,47 @@ input[type="file"] {
     padding: 0.25rem 0;
 }
 
+.audit-actions-bottom-right {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 0.0625rem dashed var(--border-color);
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Button: Wraps text cleanly across multiple lines without clipping characters */
+.btn-jump-generator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    background-color: #ffffff;
+    color: var(--umb-blue);
+    border: 0.09375rem solid var(--umb-blue);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    line-height: 1.35;
+    padding: 0.45rem 0.875rem;
+    border-radius: 0.375rem;
+    text-decoration: none;
+    text-align: center;
+    white-space: normal;           /* Allows words to wrap to the next line */
+    word-break: normal;            /* Prevents breaking words in half */
+    overflow-wrap: break-word;     /* Wraps cleanly on narrow screens */
+    max-width: 100%;
+    box-sizing: border-box;
+    box-shadow: 0 0.0625rem 0.125rem rgba(0, 0, 0, 0.05);
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-jump-generator:hover {
+    background-color: var(--umb-blue);
+    color: #ffffff;
+    border-color: var(--umb-blue);
+}
+
 /* Candidate Pool & Catalog Panels */
 .candidate-pool-panel {
     background: #ffffff;
@@ -1643,6 +1684,20 @@ input[type="file"] {
     font-size: 0.875rem;
     font-weight: 700;
     color: var(--umb-blue);
+    display: inline;               /* Allows text and pill to flow together on the same line */
+    line-height: 1.45;
+    word-break: normal;
+    overflow-wrap: break-word;
+}
+
+.meta-pill.pill-req.inline-req-pill {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+    margin-left: 0.5rem;
+    font-size: 0.6875rem;
+    padding: 0.125rem 0.5rem;
+    white-space: nowrap;          /* Keeps 'Need X' on a single chip */
 }
 
 .group-header-left, .group-header-right {
@@ -2496,6 +2551,8 @@ body.page-faq {
     .custom-modal-grid { grid-template-columns: 1fr; }
     .candidate-list, .candidate-group-grid { grid-template-columns: 1fr; }
     .candidate-header-row .search-box-wrapper { width: 100%; max-width: 100%; min-width: 0; }
+    .audit-actions-bottom-right { justify-content: stretch; }
+    .btn-jump-generator { width: 100%; text-align: center; }
 }
 
 @media (max-width: 30rem) { /* 480px */

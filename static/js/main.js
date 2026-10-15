@@ -511,10 +511,10 @@ function renderCandidatePoolUI() {
         html += `
             <div class="candidate-group-block" id="group-block-${gid}" data-req-id="${gid}" data-total-courses="${totalGroupCourses}" data-total-sections="${totalGroupSections}">
                 <div class="candidate-group-header clickable" onclick="toggleReqGroup('${gid}')" role="button" tabindex="0">
-                    <div class="group-header-left">
-                        <span class="candidate-group-title">${escapeHtml(grp.name)}</span>
-                        <span class="meta-pill pill-req">Need ${netNeeded}</span>
-                    </div>
+                    <span class="candidate-group-title">
+                        ${escapeHtml(grp.name)}
+                        <span class="meta-pill pill-req inline-req-pill">Need ${netNeeded}</span>
+                    </span>
                     <div class="group-header-right">
                         <span class="meta-pill pill-neutral pill-course-count">${totalGroupCourses} Course${totalGroupCourses === 1 ? "" : "s"}</span>
                         <span class="meta-pill pill-neutral pill-section-count">${totalGroupSections} Section${totalGroupSections === 1 ? "" : "s"}</span>
