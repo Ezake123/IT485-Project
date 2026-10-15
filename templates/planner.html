@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>UMass Boston Course Schedule Planner</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=7.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=7.1">
 
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='img/favicon-16x16.png') }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='img/favicon-32x32.png') }}">
@@ -124,6 +124,7 @@
                     </div>
 
                     <div class="audit-stacked-container">
+                        <!-- Collapsible 1: Completed Courses (RESTORED) -->
                         <div class="audit-collapse-block">
                             <div class="audit-collapse-trigger" onclick="toggleAuditAccordion('completedAccordion', this)" role="button" tabindex="0">
                                 <span class="audit-trigger-title">Completed Courses</span>
@@ -143,6 +144,7 @@
                             </div>
                         </div>
 
+                        <!-- Collapsible 2: Remaining Requirements -->
                         <div class="audit-collapse-block">
                             <div class="audit-collapse-trigger" onclick="toggleAuditAccordion('remainingAccordion', this)" role="button" tabindex="0">
                                 <span class="audit-trigger-title">Remaining Requirements</span>
@@ -154,6 +156,11 @@
                             <div id="remainingAccordion" class="audit-collapse-body collapsed">
                                 {% for req in required_courses %}
                                     <div class="req-item">
+                                        {% if req.group_name %}
+                                            <div class="req-group-title" style="font-size: 0.8125rem; font-weight: 700; color: var(--umb-blue); margin-bottom: 0.25rem;">
+                                                {{ req.group_name }}
+                                            </div>
+                                        {% endif %}
                                         Need <span class="req-needed">{{ req.needed }}</span> from:
                                         <div class="tag-list tag-list-spaced">
                                             {% for opt in req.options %}
@@ -196,7 +203,7 @@
                 </div>
             {% endif %}
 
-            <!-- STEP 3: ELIGIBLE GENERATOR COURSE POOL (MOVED UP FOR LINEAR COHERENCE) -->
+            <!-- STEP 3: ELIGIBLE GENERATOR COURSE POOL -->
             <div class="candidate-pool-panel panel-top-spacing" id="candidatePoolPanel">
                 <div class="candidate-header-row">
                     <div class="candidate-title">
@@ -219,7 +226,7 @@
                 </div>
             </div>
 
-            <!-- STEP 4: SEARCH ALL UNIVERSITY COURSES (DISCOVERY TOOL FOR ELECTIVES & GEN EDS) -->
+            <!-- STEP 4: SEARCH ALL UNIVERSITY COURSES -->
             <div class="candidate-pool-panel panel-gold-border" id="catalogSearchPanel">
                 <div class="candidate-header-row header-wrap">
                     <div class="candidate-title">
@@ -496,8 +503,9 @@
                         {% set is_disc = (sec.section|string|trim|upper).endswith('D') %}
                         {% set has_title = sec.course_title and sec.course_title != (sec.course_name ~ ' ' ~ sec.course_number) %}
                         {% set display_title = sec.course_title if has_title else (sec.course_name ~ ' ' ~ sec.course_number) %}
+                        {% set has_missing_prereqs = sec.missing_prereqs and sec.missing_prereqs|length > 0 %}
 
-                        <div class="course-card-unified {% if sec.is_custom %}card-custom-active{% endif %}">
+                        <div class="course-card-unified {% if sec.is_custom %}card-custom-active{% elif has_missing_prereqs %}has-prereq-warning{% endif %}">
                             <div class="course-main-info">
                                 <div class="course-heading-row">
                                     <span class="course-code-highlight">{{ sec.course_name }} {{ sec.course_number }}</span>
@@ -520,6 +528,12 @@
                                         <strong>Unlisted / Custom Event:</strong> Self-scheduled. Remember to register directly in WISER if applicable.
                                     </div>
                                 {% else %}
+                                    {% if has_missing_prereqs %}
+                                        <div class="prereq-warning-card" title="{{ sec.prereq_warning }}">
+                                            ⚠️ <strong>Missing Prerequisite:</strong> Needs {{ sec.missing_prereqs|join(', ') }}
+                                        </div>
+                                    {% endif %}
+
                                     <div class="course-quick-meta">
                                         <span class="quick-meta-item" title="Class meeting room or format">
                                             <span>{{ sec.location if sec.location else ('Online Asynchronous' if sec.is_online else 'Room TBA') }}</span>
@@ -535,6 +549,10 @@
 
                                         {% if sec.gen_ed and sec.gen_ed != 'None' %}
                                             <span class="meta-pill pill-gened" title="Fulfills Gen Ed: {{ sec.gen_ed }}">Gen Ed: {{ sec.gen_ed }}</span>
+                                        {% endif %}
+
+                                        {% if not has_missing_prereqs and sec.raw_prerequisites and sec.raw_prerequisites != 'None' %}
+                                            <span class="meta-pill pill-prereq-met">✓ Prereqs Met</span>
                                         {% endif %}
                                     </div>
                                 {% endif %}
@@ -574,6 +592,7 @@
         window.SERVER_SCHEDULE_DATA = {{ schedule_json | default('[]') | safe }};
         window.ACTIVE_TERM = "{{ selected_term }}";
         window.COMPLETED_COURSES = {{ completed_courses_json | default('[]') | safe }};
+        window.EARNED_CREDITS = {{ earned_credits | default(0.0) }};
         window.SERIALIZED_REQS = {{ serialized_reqs_json | default('[]') | safe }};
         window.MASTER_CATALOG_CANDIDATES = {{ candidate_courses | tojson | safe if candidate_courses else '[]' }};
     </script>

@@ -2198,6 +2198,74 @@ input[type="file"] {
     line-height: 1.4;
 }
 
+/* Prerequisite Warning & Met Badges */
+.prereq-warning-card {
+    background-color: #fffbeb;
+    color: #b45309;
+    border: 0.0625rem solid #fde68a;
+    border-radius: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.6875rem;
+    margin: 0.3125rem 0;
+    line-height: 1.35;
+    word-break: normal;
+    overflow-wrap: anywhere;
+}
+
+.candidate-item-card.has-prereq-warning {
+    border-left: 0.25rem solid #f59e0b;
+}
+
+.meta-pill.pill-prereq-met {
+    background-color: #f0fdf4;
+    color: #15803d;
+    border-color: #bbf7d0;
+    font-weight: 700;
+}
+
+.meta-pill.pill-prereq-missing {
+    background-color: #fffbeb;
+    color: #b45309;
+    border-color: #fde68a;
+    font-weight: 600;
+}
+
+.missing-highlight {
+    font-weight: 700;
+    color: #b91c1c;
+    margin-left: 0.25rem;
+}
+
+.prereq-met-text {
+    color: #15803d;
+    font-weight: 700;
+}
+
+/* Prerequisite Warnings on Cards */
+.course-card-unified.has-prereq-warning {
+    border-left: 0.25rem solid #f59e0b;
+    background-color: #fffdfa;
+}
+
+.prereq-warning-card {
+    background-color: #fffbeb;
+    color: #b45309;
+    border: 0.0625rem solid #fde68a;
+    border-radius: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.6875rem;
+    margin: 0.3125rem 0 0.5rem 0;
+    line-height: 1.35;
+    word-break: normal;
+    overflow-wrap: anywhere;
+}
+
+.meta-pill.pill-prereq-met {
+    background-color: #f0fdf4;
+    color: #15803d;
+    border-color: #bbf7d0;
+    font-weight: 700;
+}
 /* ==========================================================================
    8. PAGE: HELP & GUIDE (.page-help)
    ========================================================================== */

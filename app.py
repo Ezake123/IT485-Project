@@ -198,9 +198,10 @@ if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
             except Exception as e:
                 print(f"[!] Warning: Pre-warm attempt {attempt + 1} failed: {e}")
 
-def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
+def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager, completed_set=None, earned_credits=0.0):
     seen_ids = set()
     candidate_list = []
+    comp_set = completed_set or set()
 
     def format_sections_payload(raw_secs):
         return [s.to_dict() for s in raw_secs]
@@ -230,6 +231,7 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
                             if sections:
                                 seen_ids.add(cid_clean)
                                 title_val = getattr(course, "course_title", None) or f"{course.course_name} {course.course_number}"
+                                p_eval = evaluate_course_prereqs(course, comp_set, earned_credits)
                                 candidate_list.append({
                                     "subject_code": course.course_name.strip(),
                                     "course_number": course.course_number.strip(),
@@ -238,6 +240,9 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
                                     "credits": sections[0].credits if sections else 3,
                                     "sections_count": len(sections),
                                     "sections": format_sections_payload(sections),
+                                    "prereq_status": p_eval["status"],
+                                    "missing_prereqs": p_eval["missing"],
+                                    "prereq_warning": p_eval["message"],
                                     **group_meta
                                 })
                 continue
@@ -262,6 +267,8 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
                         dept_clean = re.sub(r'\d+[A-Za-z]?$', '', raw_cname).strip() if raw_cnum and raw_cname.endswith(raw_cnum) else raw_cname
                         title_val = getattr(course_obj, "course_title", None) or f"{dept_clean} {raw_cnum}"
 
+                        p_eval = evaluate_course_prereqs(course_obj, comp_set, earned_credits)
+
                         candidate_list.append({
                             "subject_code": dept_clean if dept_clean else cid_clean,
                             "course_number": raw_cnum,
@@ -270,6 +277,9 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager):
                             "credits": credits_val,
                             "sections_count": len(sections),
                             "sections": format_sections_payload(sections),
+                            "prereq_status": p_eval["status"],
+                            "missing_prereqs": p_eval["missing"],
+                            "prereq_warning": p_eval["message"],
                             **group_meta
                         })
 
@@ -357,6 +367,71 @@ def describe_wildcards(tokens: list[str]) -> list[str]:
 
     return parts + ranges + other_tokens
 
+def evaluate_course_prereqs(course_obj, completed_set: set, earned_credits: float) -> dict:
+    """
+    Evaluates prerequisites for a course against the student's completed courses and earned credits.
+    Returns:
+        {
+            "status": "met" | "unmet" | "review",
+            "missing": ["CS 240", "60 credits"],
+            "coreqs": ["BIOCHM 383"],
+            "message": "Needs CS 240, and 60 credits"
+        }
+    """
+    if not course_obj or not getattr(course_obj, "prerequisites", None):
+        return {"status": "met", "missing": [], "coreqs": [], "message": ""}
+
+    raw_data = course_obj.prerequisites
+    raw_text = raw_data.get("raw", "") if isinstance(raw_data, dict) else str(raw_data)
+    if not raw_text or raw_text.strip().lower() in ["none", ""]:
+        return {"status": "met", "missing": [], "coreqs": [], "message": ""}
+
+    missing = []
+    coreqs = []
+
+    # 1. Evaluate Credit Minimum
+    min_credits = raw_data.get("min_credits") if isinstance(raw_data, dict) else None
+    if min_credits and earned_credits < min_credits:
+        missing.append(f"{min_credits} credits (earned: {int(earned_credits)})")
+
+    # 2. Evaluate Course Clauses (CNF: Outer is AND, Inner is OR)
+    for clause in getattr(course_obj, "prerequisites_cnf", []):
+        normalized_clause = [normalize_course_id(c) for c in clause]
+        # If at least one course in the OR clause is completed, the requirement is satisfied!
+        if any(c in completed_set for c in normalized_clause):
+            continue
+        
+        # None completed: format the unmet clause
+        formatted_options = [format_course_id(c) for c in normalized_clause]
+        if len(formatted_options) == 1:
+            missing.append(formatted_options[0])
+        else:
+            missing.append(" or ".join(formatted_options))
+
+    # 3. Detect Soft Corequisites in Raw Text
+    coreq_matches = re.findall(r"\b(?:co-?req:?|co-?requisite(?:\s+or)?|with)\s+([A-Z]{2,8}\s*\d{1,3}[A-Z]*)", raw_text, re.IGNORECASE)
+    for cr in coreq_matches:
+        norm_cr = normalize_course_id(cr)
+        if norm_cr not in completed_set:
+            coreqs.append(format_course_id(norm_cr))
+
+    # 4. Formulate Result
+    if not missing:
+        status = "met"
+        message = ""
+    else:
+        status = "unmet"
+        message = "Needs " + ", and ".join(missing)
+        if coreqs:
+            message += f" (Co-req: {', '.join(coreqs)})"
+
+    return {
+        "status": status,
+        "missing": missing,
+        "coreqs": coreqs,
+        "message": message
+    }
+
 @app.route("/healthz", methods=["GET"])
 def health_check():
     return "OK", 200
@@ -366,6 +441,10 @@ def search_all_courses():
     query = request.args.get("q", "").strip().lower()
     geneds_param = request.args.get("geneds", "").strip()
     term_param = request.args.get("term", "").strip()
+    completed_param = request.args.get("completed", "").strip()
+    earned_credits = float(request.args.get("credits", 0) or 0.0)
+
+    completed_set = {normalize_course_id(c) for c in completed_param.split(",") if c.strip()}
     selected_geneds = [g.strip().lower() for g in geneds_param.split(",") if g.strip()]
 
     if not query and not selected_geneds:
@@ -407,13 +486,14 @@ def search_all_courses():
 
         if text_match and gened_match:
             secs = getattr(course, "sections", [])
-            
-            # Skip any course that has 0 active sections offered for this term
             if not secs or len(secs) == 0:
                 continue
 
             credits_val = secs[0].credits if (hasattr(secs[0], "credits") and secs[0].credits > 0) else 3
             c_title = getattr(course, "course_title", None) or f"{dept} {num}"
+
+            # Run incremental prerequisite check
+            p_eval = evaluate_course_prereqs(course, completed_set, earned_credits)
 
             results.append({
                 "code": f"{dept} {num}",
@@ -425,11 +505,14 @@ def search_all_courses():
                 "gen_ed": course.gen_ed or "None",
                 "credits": credits_val,
                 "sections_count": len(secs),
-                "prereqs": prereq_text_for(course)
+                "prereqs": prereq_text_for(course),
+                "prereq_status": p_eval["status"],
+                "missing_prereqs": p_eval["missing"],
+                "prereq_warning": p_eval["message"]
             })
             if len(results) >= 120:
                 break
-                
+
     return jsonify(results)
 
 @app.route("/api/course-sections", methods=["GET"])
@@ -437,6 +520,11 @@ def get_course_sections_detail():
     course_name = request.args.get("name", "").strip()
     course_number = request.args.get("number", "").strip()
     term_param = request.args.get("term", "").strip()
+    completed_param = request.args.get("completed", "").strip()
+    earned_credits = float(request.args.get("credits", 0) or 0.0)
+
+    completed_set = {normalize_course_id(c) for c in completed_param.split(",") if c.strip()}
+
     if not course_name or not course_number:
         return jsonify({"error": "Missing course identifier"}), 400
 
@@ -470,6 +558,7 @@ def get_course_sections_detail():
 
     sections_payload.sort(key=lambda x: x["section"])
     c_title = getattr(course_obj, "course_title", None) or f"{course_name} {course_number}"
+    p_eval = evaluate_course_prereqs(course_obj, completed_set, earned_credits)
 
     return jsonify({
         "course_name": course_name,
@@ -478,6 +567,7 @@ def get_course_sections_detail():
         "description": getattr(course_obj, "description", "No description available.") or "No description available.",
         "gen_ed": getattr(course_obj, "gen_ed", "None") or "None",
         "prerequisites": prereq_text_for(course_obj),
+        "prereq_eval": p_eval,
         "sections": sections_payload
     })
 
@@ -554,7 +644,7 @@ def planner():
     end_time_val = "24:00"
     target_course_count = 5
     ignore_capacity = False
-    ignore_prereqs = True
+    ignore_prereqs = False
     exclude_online = False
     warnings = []
 
@@ -581,7 +671,8 @@ def planner():
                     completed_courses, earned_credits, serialized_reqs, serialized_gen_eds = parse_audit_pdf(pdf_bytes)
                     is_scanned = True
                     if catalog:
-                        candidate_courses = get_candidate_courses_pool(serialized_reqs, catalog)
+                        completed_set = {normalize_course_id(c) for c in completed_courses}
+                        candidate_courses = get_candidate_courses_pool(serialized_reqs, catalog, completed_set, earned_credits)
                 except Exception as e:
                     error_msg = f"Failed to parse audit PDF: {str(e)}"
             else:
@@ -818,11 +909,16 @@ def planner():
                                 "gen_ed": "None",
                                 "description": "Custom user-added course.",
                                 "raw_prerequisites": "None",
-                                "is_custom": True
+                                "is_custom": True,
+                                "missing_prereqs": [],
+                                "prereq_warning": "",
+                                "prereq_status": "met"
                             })
                         else:
                             course_meta = catalog.get_course(sec.course_id)
                             c_title = getattr(course_meta, "course_title", None) or f"{sec.course_name} {sec.course_number}"
+                            p_eval = evaluate_course_prereqs(course_meta, completed_set, earned_credits)
+                            
                             schedule.append({
                                 "class_code": sec.class_code,
                                 "course_name": sec.course_name,
@@ -839,7 +935,10 @@ def planner():
                                 "gen_ed": course_meta.gen_ed if (course_meta and course_meta.gen_ed) else "None",
                                 "description": course_meta.description if (course_meta and course_meta.description) else "No description available.",
                                 "raw_prerequisites": prereq_text_for(course_meta),
-                                "is_custom": False
+                                "is_custom": False,
+                                "missing_prereqs": p_eval.get("missing", []),
+                                "prereq_warning": p_eval.get("message", ""),
+                                "prereq_status": p_eval.get("status", "met")
                             })
 
                     calendar_entries = [
@@ -870,12 +969,14 @@ def planner():
     for req in serialized_reqs:
         units = req.get("units", [])
         needed = req.get("courses_needed", 1)
+        group_name = req.get("group_name", "")
 
         wildcards = [u for u in units if is_wildcard_token(u)]
         regular = [u for u in units if not is_wildcard_token(u)]
 
         if regular:
             display_required.append({
+                "group_name": group_name,
                 "needed": needed,
                 "options": regular
             })

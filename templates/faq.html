@@ -76,6 +76,73 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Prerequisites & Course Eligibility FAQ Category -->
+            <div class="faq-category-card" id="faq-prerequisites">
+                <div class="faq-category-header">
+                    <span class="faq-category-title">Course Prerequisites & Academic Eligibility</span>
+                </div>
+                <div class="faq-category-body">
+                    <div class="faq-nested-group">
+
+                        <!-- Question 1: How prereqs work and incremental display -->
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>How does ClassPick check course prerequisites?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>ClassPick scans your completed courses and earned credit totals directly from your degree audit, then compares them against the university's course catalog prerequisite chains. If a course requires multiple prerequisites (for example, <em>AF 210</em> and <em>AF 211</em>) and you have already completed one of them, ClassPick only warns you about the specific requirement you have <strong>not</strong> yet fulfilled (e.g., <code>Needs AF 211</code>) rather than repeating courses you've already passed.</p>
+                            </div>
+                        </div>
+
+                        <!-- Question 2: Why "or equivalent" is ignored -->
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Why does ClassPick ignore the phrase "or equivalent" in prerequisites?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Many university course descriptions state requirements like <em>"MATH 130 or equivalent"</em>. While your degree audit records official transfer courses and their approved UMass Boston course numbers, neither the audit nor the database catalog contains subjective rules for what other unlisted coursework, high school preparation, or AP credit might be deemed "equivalent." To prevent courses from being falsely rejected or blocked by an automated algorithm, ClassPick evaluates only explicit course codes and credit thresholds, leaving subjective equivalencies for you and your academic advisor to verify.</p>
+                            </div>
+                        </div>
+
+                        <!-- Question 3: Permission of instructor and department consent -->
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Why are "Permission of Instructor" or "Department Consent" not automatically verified?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Permissions and overrides are manual administrative decisions made between you, your professor, and department heads—often documented via email or permission forms rather than permanent transcript codes. Because an automated scheduler cannot know if an instructor has granted you an override, ClassPick does not block these courses. Instead, it flags them so you remember to contact the professor or department to obtain an enrollment permission number before registering in WISER.</p>
+                            </div>
+                        </div>
+
+                        <!-- Question 4: Placement scores and student standing / majors -->
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>What about placement exams (ALEKS) or major restrictions (e.g., "MGT majors only")?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Placement exam scores (like math ALEKS results) and administrative registration filters (such as <em>"Open to College of Management students only"</em> or <em>"Junior standing"</em>) are enforced live by WISER at the moment of enrollment. Because degree audits primarily track completed course credits rather than real-time registration permissions, ClassPick focuses on academic coursework and credit minimums. Always double-check program-specific registration notes in the WISER class search.</p>
+                            </div>
+                        </div>
+
+                        <!-- Question 5: Why ignore prereqs is checked by default -->
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Why is "Ignore prerequisite checks" recommended when generating schedules?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Many students take prerequisite courses concurrently, have pending transfer credits in evaluation, or receive prerequisite waivers from faculty advisors. Keeping this option checked ensures the timetable solver doesn't refuse to generate an otherwise perfect weekly schedule due to an automated mismatch. ClassPick will still display amber warning banners (<code>⚠️ Missing Prerequisite</code>) on any scheduled course card that needs attention so you can review it before registering.</p>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
 
             <!-- 2. Audit Upload -->
             <div class="faq-category-card" id="faq-audit-upload">
@@ -256,7 +323,7 @@
                     <div class="faq-nested-group">
                         <div class="faq-q-item">
                             <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
-                                <span>How do I use the 4- or 5-digit class code in WISER?</span>
+                                <span>How do I use the 4 or 5 digit class code in WISER?</span>
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
@@ -296,5 +363,70 @@
     <button type="button" id="btnBackToTop" class="btn-back-to-top" aria-label="Scroll back to top" title="Back to top">
         ▲
     </button>
+
+    <script>
+        function toggleFaqQuestion(elem) {
+            const answer = elem.nextElementSibling;
+            const arrow = elem.querySelector('.accordion-arrow');
+            if (answer) {
+                const isCollapsed = answer.classList.contains('collapsed');
+                answer.classList.toggle('collapsed', !isCollapsed);
+                if (arrow) arrow.classList.toggle('arrow-rotated', isCollapsed);
+            }
+        }
+
+        // Live Question Filter
+        const searchInput = document.getElementById('faqLiveSearch');
+        if (searchInput) {
+            searchInput.addEventListener('input', function() {
+                const query = this.value.trim().toLowerCase();
+                const cards = document.querySelectorAll('.faq-category-card');
+
+                cards.forEach(card => {
+                    const questions = card.querySelectorAll('.faq-q-item');
+                    let matchInCard = 0;
+
+                    questions.forEach(q => {
+                        const questionText = (q.querySelector('.faq-q-trigger span')?.textContent || '').toLowerCase();
+                        const answerText = (q.querySelector('.faq-q-answer')?.textContent || '').toLowerCase();
+
+                        if (!query || questionText.includes(query) || answerText.includes(query)) {
+                            q.style.display = 'block';
+                            matchInCard++;
+                            if (query) {
+                                // Auto-expand matching questions during search
+                                q.querySelector('.faq-q-answer')?.classList.remove('collapsed');
+                                q.querySelector('.accordion-arrow')?.classList.add('arrow-rotated');
+                            }
+                        } else {
+                            q.style.display = 'none';
+                        }
+                    });
+
+                    card.style.display = matchInCard > 0 ? 'block' : 'none';
+                });
+            });
+        }
+
+        // Anchor Jump Handler: Smoothly scroll and open question if targeted
+        function handleFaqAnchorJump() {
+            const hash = window.location.hash;
+            if (hash && hash.startsWith('#faq-')) {
+                const targetCard = document.querySelector(hash);
+                if (targetCard) {
+                    targetCard.style.display = 'block';
+                    setTimeout(() => {
+                        targetCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        // Highlight card border briefly
+                        targetCard.style.outline = '2px solid var(--umb-gold)';
+                        setTimeout(() => targetCard.style.outline = 'none', 1800);
+                    }, 120);
+                }
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', handleFaqAnchorJump);
+        window.addEventListener('hashchange', handleFaqAnchorJump);
+    </script>
 </body>
 </html>
