@@ -946,9 +946,9 @@ def planner():
                             "course_id": f"{sec.course_name} {sec.course_number}",
                             "section": sec.section,
                             "days": sec.days or [],
-                            "start_time": sec.start_time.strftime("%H:%M") if sec.start_time else None,
-                            "end_time": sec.end_time.strftime("%H:%M") if sec.end_time else None,
-                            "location": sec.location or "Room TBA",
+                            "start_time": sec.start_time.strftime("%H:%M") if getattr(sec, "start_time", None) and hasattr(sec.start_time, "strftime") else None,
+                            "end_time": sec.end_time.strftime("%H:%M") if getattr(sec, "end_time", None) and hasattr(sec.end_time, "strftime") else None,
+                            "location": sec.location or ("Online Asynchronous" if sec.is_online else "Room TBA"),
                             "is_online": sec.is_online
                         }
                         for sec in raw_schedule

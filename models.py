@@ -126,10 +126,13 @@ class Section:
 
     @property
     def is_online(self) -> bool:
+        # If there are no assigned days or times, it is an asynchronous online course
+        if not self.days or self.start_time is None:
+            return True
         if not self.location:
-            return not self.days or not self.start_time
+            return True
         loc = self.location.strip().lower()
-        return "online" in loc or "distance" in loc or "remote" in loc
+        return any(term in loc for term in ["online", "distance", "remote", "web", "asynch"])
 
     @property
     def is_full(self) -> bool:

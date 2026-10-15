@@ -119,25 +119,30 @@ def section_meets_preferences(sec: Section, prefs: Optional[SchedulePreferences]
     elif prefs.delivery_mode == "Online" and not sec.is_online:
         return False
 
-    # 2. Allow asynchronous online courses (if online sections are allowed)
+    # 2. Asynchronous Online: Meeting days/times do not apply
     if sec.is_online and (sec.start_time is None or not sec.days):
+        # Still respect capacity filter if not ignored
+        if not getattr(prefs, "ignore_capacity", False):
+            if getattr(sec, "status", "Open").lower() in ["closed", "waitlist", "waitlisted"]:
+                return False
         return True
 
+    # 3. Synchronous Online / In-Person: Must have start, end, and days
     if sec.start_time is None or sec.end_time is None or not sec.days:
         return False
 
-    # 3. Capacity/Status Check
+    # 4. Capacity/Status Check
     if not getattr(prefs, "ignore_capacity", False):
         if getattr(sec, "status", "Open").lower() in ["closed", "waitlist", "waitlisted"]:
             return False
 
-    # 4. Allowed Days Filter
+    # 5. Allowed Days Filter (Online asynchronous is already bypassed above)
     if prefs.allowed_days is not None:
         allowed_set = {d.strip() for d in prefs.allowed_days}
         if not set(sec.days).issubset(allowed_set):
             return False
 
-    # 5. Time Limits
+    # 6. Time Limits
     if prefs.earliest_start is not None:
         if time_to_minutes(sec.start_time) < time_to_minutes(prefs.earliest_start):
             return False
@@ -237,7 +242,17 @@ def solve_schedule(
     if not requirements or len(distinct_seed) >= target_count:
         return seed_schedule if seed_schedule else None
 
-    effective_target = target_count
+    # Calculate how many distinct courses are realistically possible
+    possible_pool_courses = set()
+    for req in requirements:
+        for u in req.units:
+            for cid in u.courses:
+                clean_cid = re.sub(r':(DISC_ONLY|LEC_ONLY)$', '', cid).replace(" ", "").upper()
+                possible_pool_courses.add(clean_cid)
+
+    total_possible_distinct = len(distinct_seed.union(possible_pool_courses))
+    effective_target = min(target_count, total_possible_distinct)
+
     best_schedule: List[Section] = list(seed_schedule)
     best_course_count = len(distinct_seed)
 
@@ -366,4 +381,5 @@ def solve_schedule(
 
     if exact_match is not None:
         return exact_match
-    return best_schedule if best_schedule else None
+    # If target could not be hit exactly, return the best non-conflicting combination found
+    return best_schedule if len(best_schedule) > len(seed_schedule) or best_schedule else None
