@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>ClassPick - UMass Boston Schedule Planner</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=7.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=8.1">
 
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='img/favicon-16x16.png') }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='img/favicon-32x32.png') }}">
@@ -36,6 +36,7 @@
                 <a href="{{ url_for('planner') }}" class="nav-link">Schedule builder</a>
                 <a href="{{ url_for('help_page') }}" class="nav-link">Help & Guide</a>
                 <a href="{{ url_for('faq_page') }}" class="nav-link">FAQ</a>
+                <a href="{{ url_for('feedback_page') }}" class="nav-link">Feedback</a>
             </nav>
         </div>
     </header>
@@ -143,8 +144,9 @@
                         <line x1="16" y1="17" x2="8" y2="17"></line>
                         <polyline points="10 9 9 9 8 9"></polyline>
                     </svg>
-                    <span>Give Feedback</span>
+                    <span>Take Survey</span>
                 </a>
+                <a href="{{ url_for('feedback_page') }}" class="footer-btn">Feedback</a>
             </div>
         </div>
     </footer>
@@ -152,5 +154,14 @@
     <button type="button" id="btnBackToTop" class="btn-back-to-top" aria-label="Scroll back to top" title="Back to top">
         ▲
     </button>
+
+    <!-- Asynchronous Render Free Tier Warm-up Ping -->
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            fetch("/healthz", { method: "GET", cache: "no-store" })
+                .then(r => r.json())
+                .catch(() => {});
+        });
+    </script>
 </body>
 </html>

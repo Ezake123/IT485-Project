@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import time
 from typing import List, Optional, Set, Dict, Any
+from prerequisite_parser import prerequisite_compiler, normalize_id
 
 #-----------------------------------------------------------------
 # Description:
@@ -10,11 +11,6 @@ from typing import List, Optional, Set, Dict, Any
 # Developed with assistance from Google Gemini using agentic workflows 
 #-----------------------------------------------------------------
 
-# -----------------------------------------------------------------
-# Centralized General Education Configuration & Token Mappings
-# -----------------------------------------------------------------
-
-# Canonical mapping from Token suffix -> Database catalog Gen Ed field
 GENED_TOKEN_MAP = {
     "ARTS": "The Arts",
     "THE_ARTS": "The Arts",
@@ -29,7 +25,6 @@ GENED_TOKEN_MAP = {
     "WORLD_LANGUAGES": "World Languages"
 }
 
-# Ordered list of (Audit Display Name, Token Suffix) used for PDF scanning
 KNOWN_GENED_CATEGORIES = [
     ("Social & Behavioral Sciences", "SOCIAL_AND_BEHAVIORAL_SCIENCES"),
     ("Social and Behavioral Sciences", "SOCIAL_AND_BEHAVIORAL_SCIENCES"),
@@ -44,19 +39,61 @@ KNOWN_GENED_CATEGORIES = [
     ("The Arts", "ARTS"),
 ]
 
-#--------------------------------------------------------------
-# Format for degree audits
-#--------------------------------------------------------------
+DAY_BIT_OFFSET = {
+    "MO": 0, "M": 0, "MON": 0,
+    "TU": 1, "T": 1, "TUE": 1,
+    "WE": 2, "W": 2, "WED": 2,
+    "TH": 3, "R": 3, "THU": 3,
+    "FR": 4, "F": 4, "FRI": 4,
+    "SA": 5, "S": 5, "SAT": 5,
+    "SU": 6, "U": 6, "SUN": 6
+}
 
-# Each courses scanned from the scanner
+def parse_time_value(val: Any) -> Optional[time]:
+    if not val:
+        return None
+    if isinstance(val, time):
+        return val
+    try:
+        parts = [int(p) for p in str(val).strip().split(":")]
+        if len(parts) >= 2:
+            if parts[0] >= 24:
+                return time(23, 59, 59)
+            return time(parts[0], parts[1], parts[2] if len(parts) > 2 else 0)
+    except Exception:
+        pass
+    return None
+
+def compute_section_time_bitmask(days: Optional[List[str]], start_t: Optional[time], end_t: Optional[time]) -> int:
+    """
+    Encodes weekly schedule into an integer bitmask where each day has 96 15-minute slots.
+    Total slots: 7 days * 96 slots = 672 bits. Represented efficiently by Python arbitrary-precision int.
+    Bitwise collision check: (mask_a & mask_b) != 0.
+    """
+    if not days or not start_t or not end_t:
+        return 0
+
+    s_min = start_t.hour * 60 + start_t.minute
+    e_min = end_t.hour * 60 + end_t.minute
+    if s_min >= e_min:
+        return 0
+
+    # 15-minute intervals (0..95)
+    start_slot = s_min // 15
+    end_slot = (e_min + 14) // 15
+
+    mask = 0
+    for d in days:
+        d_clean = str(d).strip().upper()
+        day_idx = DAY_BIT_OFFSET.get(d_clean)
+        if day_idx is not None:
+            day_base = day_idx * 96
+            for slot in range(start_slot, end_slot):
+                mask |= (1 << (day_base + slot))
+    return mask
+
 @dataclass
 class CourseUnit:
-    #-----------------------------------------------------------------
-    # Represents an atomic course, co-requisite set, or alternative unit.
-    # - Single: unit_type='SINGLE', courses=['CS110']
-    # - Corequisite: unit_type='AND', courses=['PHYSIC114', 'PHYSIC182']
-    # - Alternative: unit_type='OR', courses=['BIOL210', 'BIOL212']
-    #-----------------------------------------------------------------
     raw_token: str
     unit_type: str  # 'SINGLE', 'AND', 'OR'
     courses: List[str]
@@ -77,14 +114,12 @@ class CourseUnit:
             return any(c in completed_set for c in self.courses)
         return self.courses[0] in completed_set
 
-# Groups the courses into their corresponding requirement 
 @dataclass
 class RequirementGroup:
     group_name: str
     courses_needed: int
     units: List[CourseUnit] = field(default_factory=list)
 
-# Universal payload created by the scanner
 @dataclass
 class DegreeAuditResult:
     completed_courses: Set[str]
@@ -92,18 +127,14 @@ class DegreeAuditResult:
     requirements: List[RequirementGroup]
     gen_ed_requirements: List[RequirementGroup] = field(default_factory=list)
 
-#--------------------------------------------------------------
-# Format to match the data exactly like the ones in database
-#--------------------------------------------------------------
-
 @dataclass
 class SchedulePreferences:
-    earliest_start: Optional[time] = None       # e.g., time(9, 0)
-    latest_end: Optional[time] = None           # e.g., time(17, 0)
-    allowed_days: Optional[List[str]] = None    # e.g., ['M', 'Tu', 'W', 'Th', 'F']
-    delivery_mode: str = "Any"                  # "In-person", "Online", or "Any"
-    ignore_capacity: bool = False               # Ignore capacity limit in schedule
-    exclude_online: bool = False                # Exclude online / asynchronous sections
+    earliest_start: Optional[time] = None
+    latest_end: Optional[time] = None
+    allowed_days: Optional[List[str]] = None
+    delivery_mode: str = "Any"
+    ignore_capacity: bool = False
+    exclude_online: bool = False
 
 @dataclass
 class Section:
@@ -118,15 +149,21 @@ class Section:
     status: str = "Open"
     instructors: List[str] = field(default_factory=lambda: ["TBA"])
     term: Optional[str] = None
-    credits: int = 0                            
+    credits: int = 3
+    _time_mask: Optional[int] = field(default=None, init=False, repr=False)
 
     @property
     def course_id(self) -> str:
-        return f"{self.course_name.strip()}{self.course_number.strip()}"
+        return f"{self.course_name.strip()}{self.course_number.strip()}".upper()
+
+    @property
+    def time_mask(self) -> int:
+        if self._time_mask is None:
+            self._time_mask = compute_section_time_bitmask(self.days, self.start_time, self.end_time)
+        return self._time_mask
 
     @property
     def is_online(self) -> bool:
-        # If there are no assigned days or times, it is an asynchronous online course
         if not self.days or self.start_time is None:
             return True
         if not self.location:
@@ -163,76 +200,59 @@ class Section:
             "days": self.days or [],
             "start_time": self.formatted_start_time,
             "end_time": self.formatted_end_time,
+            "location": self.location or ("Online Asynchronous" if self.is_online else "Room TBA"),
+            "delivery_type": self.delivery_type,
+            "instructors": self.instructors or ["TBA"],
+            "status": self.status,
+            "is_full": self.is_full,
             "is_online": self.is_online
         }
 
 @dataclass
 class Course:
-    course_name: str                            # e.g., 'AF'
-    course_number: str                          # e.g., '470'
+    course_name: str
+    course_number: str
     description: Optional[str] = None
-    gen_ed: Optional[str] = None                # e.g., 'Arts/Humanities' or None
+    gen_ed: Optional[str] = None
     prerequisites: Dict[str, Any] = field(default_factory=dict)
-    id: Optional[int] = None                    # Supabase ID
+    id: Optional[int] = None
     sections: List[Section] = field(default_factory=list)
+    _parsed_prereqs_cache: Optional[Dict[str, Any]] = field(default=None, init=False, repr=False)
 
     @property
     def course_id(self) -> str:
-        return f"{self.course_name.strip()}{self.course_number.strip()}"
+        return f"{self.course_name.strip()}{self.course_number.strip()}".upper()
 
     @property
-    def prerequisites_cnf(self) -> List[List[str]]:
-        raw_cnf = self.prerequisites.get("courses", [])
-        cnf: List[List[str]] = []
-        for clause in raw_cnf:
-            or_group = []
-            for item in clause:
-                c_name = item.get("course_name", "").strip()
-                c_num = item.get("course_number", "").strip()
-                if c_name and c_num:
-                    or_group.append(f"{c_name}{c_num}")
-            if or_group:
-                cnf.append(or_group)
-        return cnf
+    def parsed_prerequisites(self) -> Dict[str, Any]:
+        """Reads pre-compiled AST if present; otherwise falls back to parsing once and caching."""
+        if self._parsed_prereqs_cache is None:
+            if isinstance(self.prerequisites, dict) and "prerequisites_ast" in self.prerequisites:
+                # Fast path: Pre-compiled in database
+                self._parsed_prereqs_cache = self.prerequisites
+            else:
+                # Fallback: Compile once and cache
+                raw_text = self.prerequisites.get("raw", "") if isinstance(self.prerequisites, dict) else str(self.prerequisites or "None")
+                self._parsed_prereqs_cache = prerequisite_compiler.parse(raw_text)
+        return self._parsed_prereqs_cache
 
     def prerequisites_met(self, completed_course_ids: Set[str], current_earned_credits: int = 0) -> bool:
-        min_credits = self.prerequisites.get("min_credits")
+        norm_completed = {normalize_id(c) for c in completed_course_ids}
+        min_credits = self.prerequisites.get("min_credits") if isinstance(self.prerequisites, dict) else None
         if min_credits and current_earned_credits < min_credits:
             return False
 
-        for or_clause in self.prerequisites_cnf:
-            if not any(req in completed_course_ids for req in or_clause):
-                return False
+        parsed = self.parsed_prerequisites
+        prereq_ast = parsed.get("prerequisites_ast")
+        if prereq_ast:
+            return prerequisite_compiler.evaluate_ast(prereq_ast, norm_completed)
         return True
-
-#-----------------------------------------------------------------
-# Helper function to parse time vlaue from database
-#-----------------------------------------------------------------
-
-def parse_time_value(val: Any) -> Optional[time]:
-    if not val:
-        return None
-    if isinstance(val, time):
-        return val
-    try:
-        parts = [int(p) for p in str(val).strip().split(":")]
-        if len(parts) >= 2:
-            if parts[0] >= 24:
-                return time(23, 59, 59)
-            return time(parts[0], parts[1], parts[2] if len(parts) > 2 else 0)
-    except Exception:
-        pass
-    return None
-
-#-----------------------------------------------------------------
-# Manager for 
-#-----------------------------------------------------------------
 
 class CatalogManager:
     def __init__(self):
         self.courses: Dict[str, Course] = {}                    
         self.sections: Dict[str, List[Section]] = {}
-        self.dept_index: Dict[str, List[Course]] = {}           # Fast O(1) department index
+        self.dept_index: Dict[str, List[Course]] = {}
 
     @staticmethod
     def _normalize_id(course_id: str) -> str:
@@ -241,8 +261,6 @@ class CatalogManager:
     def add_course(self, course: Course):
         norm_id = self._normalize_id(course.course_id)
         self.courses[norm_id] = course
-
-        # Index course under its uppercase subject code (e.g., 'CS', 'IT', 'MATH')
         dept_key = course.course_name.strip().upper()
         if dept_key not in self.dept_index:
             self.dept_index[dept_key] = []
@@ -253,8 +271,6 @@ class CatalogManager:
         if norm_id not in self.sections:
             self.sections[norm_id] = []
         self.sections[norm_id].append(section)
-        
-        # Link directly to course object for instant O(1) retrieval during search
         course = self.courses.get(norm_id)
         if course:
             course.sections.append(section)
@@ -272,8 +288,8 @@ class CatalogManager:
         for row in courses_rows:
             course = Course(
                 id=row.get("id"),
-                course_name=str(row["course_name"]).strip(),
-                course_number=str(row["course_number"]).strip(),
+                course_name=str(row.get("course_name", "")).strip(),
+                course_number=str(row.get("course_number", "")).strip(),
                 description=row.get("description"),
                 gen_ed=row.get("gen_ed"),
                 prerequisites=row.get("prerequisites") or {}

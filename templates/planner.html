@@ -36,6 +36,7 @@
                 <a href="{{ url_for('planner') }}" class="nav-link active">Schedule builder</a>
                 <a href="{{ url_for('help_page') }}" class="nav-link">Help & Guide</a>
                 <a href="{{ url_for('faq_page') }}" class="nav-link">FAQ</a>
+                <a href="{{ url_for('feedback_page') }}" class="nav-link">Feedback</a>
             </nav>
         </div>
     </header>
@@ -47,9 +48,19 @@
                 <p class="subtitle">Upload your UMass Boston degree audit PDF to scan requirements, set preferences, and solve your semester schedule.</p>
             </div>
             {% if is_scanned or schedule %}
-                <a href="{{ url_for('planner') }}" class="btn-clear-all" title="Clear all courses and start over">
-                    Clear All
-                </a>
+                <form method="POST" action="{{ url_for('planner') }}" style="margin: 0;">
+                    <input type="hidden" name="action" value="clear_all">
+                    <input type="hidden" name="selected_season" value="{{ selected_season }}">
+                    <input type="hidden" name="selected_year" value="{{ selected_year }}">
+                    <input type="hidden" name="audit_filename" value="{{ audit_filename }}">
+                    <input type="hidden" name="serialized_reqs_json" value="{{ serialized_reqs_json }}">
+                    <input type="hidden" name="serialized_gen_eds_json" value="{{ serialized_gen_eds_json|default('[]') }}">
+                    <input type="hidden" name="completed_courses_json" value="{{ completed_courses_json }}">
+                    <input type="hidden" name="earned_credits" value="{{ earned_credits }}">
+                    <button type="submit" class="btn-clear-all" title="Clear all and return to upload menu while retaining selected season, year, and audit">
+                        Clear All
+                    </button>
+                </form>
             {% endif %}
         </div>
 
@@ -61,21 +72,24 @@
             <div class="alert-warning">{{ term_notice }}</div>
         {% endif %}
 
-        {% if is_generated and not schedule %}
-            <div class="alert-warning">
-                <strong>No valid schedule combinations found.</strong><br>
-                The solver could not find courses meeting all selected days and time restrictions. Try broadening your allowed hours or adding more days.
-            </div>
-        {% endif %}
-
         <!-- STEP 1: PDF SCANNING OR MANUAL ENTRY -->
         {% if not is_scanned %}
             <form id="uploadForm" method="POST" enctype="multipart/form-data" class="upload-form">
                 <input type="hidden" id="formActionInput" name="action" value="scan">
+                <input type="hidden" name="retained_reqs_json" value="{{ retained_reqs_json|default('[]') }}">
+                <input type="hidden" name="retained_gen_eds_json" value="{{ retained_gen_eds_json|default('[]') }}">
+                <input type="hidden" name="retained_completed_json" value="{{ retained_completed_json|default('[]') }}">
+                <input type="hidden" name="retained_earned_credits" value="{{ retained_earned_credits|default(0.0) }}">
+                <input type="hidden" name="retained_audit_filename" value="{{ audit_filename }}">
+
                 <div class="drop-zone" id="dropZone" role="button" tabindex="0" aria-label="Upload Degree Audit PDF">
                     <div class="drop-zone-icon">📄</div>
                     <div class="drop-zone-text">Click or drag & drop your degree audit PDF here</div>
-                    <div class="selected-file-name" id="fileName"></div>
+                    <div class="selected-file-name" id="fileName">
+                        {% if audit_filename %}
+                            Selected: {{ audit_filename }}
+                        {% endif %}
+                    </div>
                     <input type="file" id="auditInput" name="audit_pdf" accept="application/pdf" aria-label="Degree Audit PDF File Input">
                 </div>
 
@@ -283,6 +297,9 @@
                     <div class="candidate-title flex-align-gap">
                         <span>Locked-in Course Pool</span>
                         <span class="box-count" id="lockedCount">{{ locked_sections|length }} Locked</span>
+                        <button type="button" id="btnClearLockedPool" class="btn-clear-pool" onclick="clearAllLockedSections()" title="Unlock all sections and return courses to generator pool">
+                            Clear Pool
+                        </button>
                         <a href="{{ url_for('faq_page') }}#faq-locked-section" class="section-help-badge" target="classpick_faq" title="FAQ on Locked Sections">Help?</a>
                     </div>
                     <div class="flex-align-gap">
@@ -312,7 +329,8 @@
                                         {% else %}
                                             <button type="button" class="btn-details" onclick="openCourseModal('{{ item.course.subject_code }}', '{{ item.course.course_number }}', '{{ item.section.section }}')">Details</button>
                                         {% endif %}
-                                        <button type="button" class="btn-remove-pool" onclick="unlockSection('{{ item.section.class_code }}', '{{ sec_term }}')" title="Unlock and return to course pool">✕</button>
+                                        <button type="button" class="btn-action-unlock" onclick="unlockSection('{{ item.section.class_code }}', '{{ sec_term }}')" title="Remove from lock-in and return to course pool">Remove from Lock-in</button>
+                                        <button type="button" class="btn-action-delete" onclick="deleteLockedSectionCompletely('{{ item.section.class_code }}', '{{ sec_term }}')" title="Delete course entirely">Delete</button>
                                     </div>
                                 </div>
                                 <div class="candidate-name" title="{{ display_title }}">{{ display_title }}</div>
@@ -379,9 +397,24 @@
                 </div>
             </div>
 
+            {% if is_generated and not schedule %}
+                {% if is_empty_pool or (not candidate_courses and not locked_sections) %}
+                    <div class="alert-warning">
+                        <strong>No courses available to schedule.</strong><br>
+                        Your eligible generator course pool and locked-in sections are currently empty. Please add courses from the catalog search or degree audit requirements below before generating a schedule.
+                    </div>
+                {% else %}
+                    <div class="alert-warning">
+                        <strong>No valid schedule combinations found.</strong><br>
+                        The solver could not find courses meeting all selected days and time restrictions. Try broadening your allowed hours or adding more days.
+                    </div>
+                {% endif %}
+            {% endif %}
+
             <!-- STEP 6: RESTRICTIONS & CONSTRAINTS -->
             <form method="POST" class="restrictions-card" id="restrictionsSection">
                 <input type="hidden" name="action" value="generate">
+                <input type="hidden" name="audit_filename" value="{{ audit_filename }}">
                 <input type="hidden" name="serialized_reqs_json" value="{{ serialized_reqs_json }}">
                 <input type="hidden" name="serialized_gen_eds_json" value="{{ serialized_gen_eds_json|default('[]') }}">
                 <input type="hidden" name="completed_courses_json" value="{{ completed_courses_json }}">
@@ -492,9 +525,14 @@
                         <p>Tell us how the schedule builder worked for you and what we can improve in a quick 1-minute survey.</p>
                     </div>
                 </div>
-                <a href="https://docs.google.com/forms/d/e/1FAIpQLSfuu2U6K53OCovCZsbRZIl9S0wycXzleq4HrR9tvo7auPdtWg/viewform?usp=dialog" target="_blank" rel="noopener noreferrer" class="btn-feedback-cta">
-                    Share Feedback ↗
-                </a>
+                <div class="feedback-banner-actions">
+                    <a href="{{ url_for('feedback_page') }}" class="btn-feedback-cta">
+                        Quick Feedback
+                    </a>
+                    <a href="https://docs.google.com/forms/d/e/1FAIpQLSfuu2U6K53OCovCZsbRZIl9S0wycXzleq4HrR9tvo7auPdtWg/viewform?usp=dialog" target="_blank" rel="noopener noreferrer" class="btn-feedback-secondary" title="Open complete survey in new tab">
+                        Full Survey ↗
+                    </a>
+                </div>
             </div>
 
             <div class="course-box box-blue-top" id="scheduledCoursesBox">
@@ -517,7 +555,7 @@
                         {% set display_title = sec.course_title if has_title else (sec.course_name ~ ' ' ~ sec.course_number) %}
                         {% set has_missing_prereqs = sec.missing_prereqs and sec.missing_prereqs|length > 0 %}
 
-                        <div class="course-card-unified {% if sec.is_custom %}card-custom-active{% elif has_missing_prereqs %}has-prereq-warning{% endif %}">
+                        <div class="course-card-unified {% if sec.is_custom %}card-custom-active{% elif has_missing_prereqs %}has-prereq-warning{% endif %}" id="scheduled-card-{{ sec.class_code }}">
                             <div class="course-main-info">
                                 <div class="course-heading-row">
                                     <span class="course-code-highlight">{{ sec.course_name }} {{ sec.course_number }}</span>
@@ -571,6 +609,7 @@
                             </div>
 
                             <div class="course-actions-right">
+                                <!-- Single Time Badge (Remove any duplicate block directly above or below this) -->
                                 <div class="course-time-badge">
                                     <div class="badge-days">{{ sec.days|join(', ') if sec.days else 'Online' }}</div>
                                     <div class="badge-time">
@@ -582,16 +621,33 @@
                                     </div>
                                 </div>
 
-                                {% if not sec.is_custom %}
-                                    <div class="course-action-buttons">
+                                <div class="course-action-buttons">
+                                    {% if not sec.is_custom %}
                                         <button type="button" class="btn-copy-code copy-btn-full" onclick="copyClassCode(this, '{{ sec.class_code }}')" title="Copy 4-digit code to paste in WISER">
                                             <span>#{{ sec.class_code }}</span> [Copy]
                                         </button>
                                         <button type="button" class="btn-details-matched" onclick="openCourseModal('{{ sec.course_name }}', '{{ sec.course_number }}', '{{ sec.section }}', '{{ display_title|replace('\'', '\\\'') }}')">
                                             Details
                                         </button>
-                                    </div>
-                                {% endif %}
+                                    {% else %}
+                                        <button type="button" class="btn-details-matched" onclick="openCustomModal('{{ sec.class_code }}')">
+                                            Edit
+                                        </button>
+                                    {% endif %}
+
+                                    {% if sec.is_locked %}
+                                        <button type="button" class="btn-sched-action btn-action-unlock" onclick="handleScheduledDelete('{{ sec.course_name }}', '{{ sec.course_number }}', '{{ sec.class_code }}', true, 'return', this)" title="Remove from lock-in and return to course pool">
+                                            Remove from Lock-in
+                                        </button>
+                                        <button type="button" class="btn-sched-action btn-action-delete" onclick="handleScheduledDelete('{{ sec.course_name }}', '{{ sec.course_number }}', '{{ sec.class_code }}', true, 'delete', this)" title="Delete course entirely">
+                                            Delete
+                                        </button>
+                                    {% else %}
+                                        <button type="button" class="btn-sched-action btn-action-delete" onclick="handleScheduledDelete('{{ sec.course_name }}', '{{ sec.course_number }}', '{{ sec.class_code }}', false, 'delete', this)" title="Remove from generator pool">
+                                            Delete
+                                        </button>
+                                    {% endif %}
+                                </div>
                             </div>
                         </div>
                     {% endfor %}
@@ -662,8 +718,9 @@
                         <line x1="16" y1="17" x2="8" y2="17"></line>
                         <polyline points="10 9 9 9 8 9"></polyline>
                     </svg>
-                    <span>Give Feedback</span>
+                    <span>Take Survey</span>
                 </a>
+                <a href="{{ url_for('feedback_page') }}" class="footer-btn">Feedback</a>
             </div>
         </div>
     </footer>

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CLASSPICK- UNIFIED STYLESHEET
+   CLASSPICK - UNIFIED STYLESHEET
    --------------------------------------------------------------------------
    Table of Contents:
      1. CSS Variables & Base Reset
@@ -11,7 +11,8 @@
      7. Page: Schedule Builder (.page-planner)
      8. Page: Help & Guide (.page-help)
      9. Page: Frequently Asked Questions (.page-faq)
-    10. Responsive Media Queries
+    10. Page: Feedback & Survey (.page-feedback)
+    11. Responsive Media Queries
    ========================================================================== */
 
 /* ==========================================================================
@@ -263,7 +264,8 @@ body {
     flex-wrap: wrap;
 }
 
-.footer-btn {
+.footer-btn,
+.footer-btn:visited {
     display: inline-flex;
     align-items: center;
     background-color: rgba(255, 255, 255, 0.12);
@@ -284,7 +286,8 @@ body {
     color: var(--umb-gold);
 }
 
-.footer-icon-btn {
+.footer-icon-btn,
+.footer-icon-btn:visited {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
@@ -309,6 +312,7 @@ body {
 
 .footer-icon-btn svg {
     flex-shrink: 0;
+    stroke: currentColor;
 }
 
 /* Post-Generation Survey Banner */
@@ -350,6 +354,13 @@ body {
     line-height: 1.4;
 }
 
+.feedback-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
 .btn-feedback-cta {
     background-color: var(--umb-blue);
     color: #ffffff;
@@ -360,10 +371,36 @@ body {
     text-decoration: none;
     transition: background-color 0.15s ease, transform 0.15s ease;
     white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .btn-feedback-cta:hover {
     background-color: var(--umb-dark-blue);
+    transform: translateY(-0.0625rem);
+}
+
+.btn-feedback-secondary {
+    background-color: #ffffff;
+    color: var(--umb-blue);
+    border: 0.0625rem solid var(--umb-blue);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    padding: 0.5625rem 1rem;
+    border-radius: 0.375rem;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-feedback-secondary:hover {
+    background-color: #f0f7ff;
+    color: var(--umb-dark-blue);
+    border-color: var(--umb-dark-blue);
     transform: translateY(-0.0625rem);
 }
 
@@ -851,13 +888,66 @@ body {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 0.5rem;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .info-item {
     background: #f8fafc;
     border: 0.0625rem solid #e2e8f0;
     border-radius: 0.375rem;
-    padding: 0.5rem;
+    padding: 0.5rem 0.625rem;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.info-code-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.375rem;
+    min-width: 0;
+    width: 100%;
+}
+
+.code-number {
+    font-weight: 700;
+    font-size: 0.8125rem;
+    color: var(--umb-blue);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.btn-copy-mini {
+    background-color: #ffffff;
+    border: 0.0625rem solid #cbd5e1;
+    color: #334155;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    line-height: 1.25;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    box-sizing: border-box;
+}
+
+.btn-copy-mini:hover {
+    background-color: var(--umb-blue);
+    color: #ffffff;
+    border-color: var(--umb-blue);
+}
+
+.btn-copy-mini.copied {
+    background-color: #10b981;
+    color: #ffffff;
+    border-color: #10b981;
 }
 
 .info-label {
@@ -1445,7 +1535,6 @@ input[type="file"] {
     box-sizing: border-box;
 }
 
-/* Button: Wraps text cleanly across multiple lines without clipping characters */
 .btn-jump-generator {
     display: inline-flex;
     align-items: center;
@@ -1460,9 +1549,9 @@ input[type="file"] {
     border-radius: 0.375rem;
     text-decoration: none;
     text-align: center;
-    white-space: normal;           /* Allows words to wrap to the next line */
-    word-break: normal;            /* Prevents breaking words in half */
-    overflow-wrap: break-word;     /* Wraps cleanly on narrow screens */
+    white-space: normal;
+    word-break: normal;
+    overflow-wrap: break-word;
     max-width: 100%;
     box-sizing: border-box;
     box-shadow: 0 0.0625rem 0.125rem rgba(0, 0, 0, 0.05);
@@ -1684,7 +1773,7 @@ input[type="file"] {
     font-size: 0.875rem;
     font-weight: 700;
     color: var(--umb-blue);
-    display: inline;               /* Allows text and pill to flow together on the same line */
+    display: inline;
     line-height: 1.45;
     word-break: normal;
     overflow-wrap: break-word;
@@ -1697,7 +1786,7 @@ input[type="file"] {
     margin-left: 0.5rem;
     font-size: 0.6875rem;
     padding: 0.125rem 0.5rem;
-    white-space: nowrap;          /* Keeps 'Need X' on a single chip */
+    white-space: nowrap;
 }
 
 .group-header-left, .group-header-right {
@@ -1763,8 +1852,54 @@ input[type="file"] {
     display: flex;
     align-items: center;
     gap: 0.25rem;
-    flex-shrink: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     margin-left: auto;
+    max-width: 100%;
+}
+
+.btn-action-delete {
+    background-color: #fee2e2;
+    color: #b91c1c;
+    border: 0.0625rem solid #fca5a5;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.25;
+    flex-shrink: 0;
+}
+
+.btn-action-delete:hover {
+    background-color: #ef4444;
+    color: #ffffff;
+    border-color: #dc2626;
+}
+
+.btn-action-unlock {
+    background-color: #fef3c7;
+    color: #92400e;
+    border: 0.0625rem solid #fde68a;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.25;
+    flex-shrink: 0;
+}
+
+.btn-action-unlock:hover {
+    background-color: #f59e0b;
+    color: #ffffff;
+    border-color: #d97706;
 }
 
 .candidate-name {
@@ -2039,9 +2174,23 @@ input[type="file"] {
     padding: 0.25rem 0.375rem;
     font-size: 0.6875rem;
     overflow: hidden;
-    box-shadow: 0 0.125rem 0.25rem rgba(0,0,0,0.15);
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.15);
     border-left: 0.1875rem solid var(--umb-gold);
     z-index: 2;
+    cursor: pointer;
+    transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
+    user-select: none;
+}
+
+.event-block:hover {
+    filter: brightness(1.12);
+    transform: scale(1.02);
+    box-shadow: 0 0.25rem 0.5rem rgba(0, 0, 0, 0.22);
+    z-index: 10;
+}
+
+.event-block:active {
+    transform: scale(0.99);
 }
 
 .event-title {
@@ -2058,6 +2207,25 @@ input[type="file"] {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+@keyframes cardPulseGlow {
+    0% {
+        box-shadow: 0 0 0 0 rgba(0, 90, 139, 0.5);
+        border-color: var(--umb-blue);
+    }
+    50% {
+        box-shadow: 0 0 0 0.375rem rgba(0, 90, 139, 0.25);
+        border-color: var(--umb-blue);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(0, 90, 139, 0);
+        border-color: var(--border-color);
+    }
+}
+
+.card-highlight-pulse {
+    animation: cardPulseGlow 1.8s ease-out;
 }
 
 /* Scheduled Courses Output */
@@ -2133,10 +2301,10 @@ input[type="file"] {
     align-items: center;
     gap: 1.25rem;
     transition: box-shadow 0.2s ease, border-color 0.2s ease;
-    min-width: 0;
+    width: 100%;
     max-width: 100%;
-    overflow: hidden;
     box-sizing: border-box;
+    overflow: visible;
 }
 
 .course-card-unified:hover {
@@ -2177,7 +2345,7 @@ input[type="file"] {
     line-height: 1.35;
     margin-bottom: 0.5rem;
     word-break: normal;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
 }
 
 .course-quick-meta {
@@ -2200,17 +2368,18 @@ input[type="file"] {
     font-size: 0.75rem;
     font-weight: 500;
     color: #334155;
-    white-space: nowrap;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .course-actions-right {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.875rem;
     flex-shrink: 0;
+    min-width: 0;
 }
 
 .course-time-badge {
@@ -2220,7 +2389,8 @@ input[type="file"] {
     border-radius: 0.375rem;
     text-align: right;
     font-size: 0.75rem;
-    min-width: 8.5rem;
+    width: 9.5rem;
+    min-width: 9.5rem;
     box-sizing: border-box;
 }
 
@@ -2240,8 +2410,26 @@ input[type="file"] {
     display: flex;
     flex-direction: column;
     gap: 0.375rem;
-    width: 6.875rem;
+    width: 8rem;
+    min-width: 8rem;
     align-items: stretch;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+.course-action-buttons button {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+}
+
+.btn-sched-action {
+    width: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.75rem;
 }
 
 .custom-course-callout {
@@ -2298,31 +2486,11 @@ input[type="file"] {
     font-weight: 700;
 }
 
-/* Prerequisite Warnings on Cards */
 .course-card-unified.has-prereq-warning {
     border-left: 0.25rem solid #f59e0b;
     background-color: #fffdfa;
 }
 
-.prereq-warning-card {
-    background-color: #fffbeb;
-    color: #b45309;
-    border: 0.0625rem solid #fde68a;
-    border-radius: 0.25rem;
-    padding: 0.25rem 0.5rem;
-    font-size: 0.6875rem;
-    margin: 0.3125rem 0 0.5rem 0;
-    line-height: 1.35;
-    word-break: normal;
-    overflow-wrap: anywhere;
-}
-
-.meta-pill.pill-prereq-met {
-    background-color: #f0fdf4;
-    color: #15803d;
-    border-color: #bbf7d0;
-    font-weight: 700;
-}
 /* ==========================================================================
    8. PAGE: HELP & GUIDE (.page-help)
    ========================================================================== */
@@ -2521,7 +2689,172 @@ body.page-faq {
 }
 
 /* ==========================================================================
-   10. RESPONSIVE MEDIA QUERIES
+   10. PAGE: FEEDBACK & SURVEY (.page-feedback)
+   ========================================================================== */
+body.page-feedback {
+    background-color: #f1f5f9;
+    background-image: 
+        radial-gradient(circle at 12% 15%, rgba(0, 90, 139, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 88% 18%, rgba(254, 222, 66, 0.12) 0%, transparent 45%),
+        linear-gradient(to right, rgba(0, 90, 139, 0.03) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(0, 90, 139, 0.03) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 1.5rem 1.5rem, 1.5rem 1.5rem;
+    background-attachment: fixed;
+}
+
+.feedback-shell-spacing {
+    padding-top: 2.25rem;
+    padding-bottom: 3.5rem;
+}
+
+.feedback-card {
+    background: #ffffff;
+    border-radius: 0.625rem;
+    box-shadow: 0 0.25rem 1.25rem rgba(0, 0, 0, 0.06);
+    border: 0.0625rem solid var(--border-color);
+    border-top: 0.25rem solid var(--umb-blue);
+    max-width: 42.5rem;
+    margin: 0 auto;
+    padding: 2rem 2.25rem;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.feedback-header {
+    border-bottom: 0.0625rem solid var(--border-color);
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.feedback-header h2 {
+    font-size: 1.5rem;
+    margin: 0 0 0.375rem 0;
+    color: var(--umb-blue);
+}
+
+.feedback-header p {
+    font-size: 0.875rem;
+    color: #64748b;
+    margin: 0;
+    line-height: 1.5;
+}
+
+.feedback-form-group {
+    margin-bottom: 1.25rem;
+    width: 100%;
+}
+
+.required-asterisk {
+    color: #ef4444;
+    font-weight: 700;
+}
+
+/* Interactive Star Rating (Unicode CSS Radio Row) */
+.star-rating {
+    display: inline-flex;
+    flex-direction: row-reverse;
+    gap: 0.35rem;
+    user-select: none;
+    margin-top: 0.25rem;
+}
+
+.star-rating input {
+    display: none;
+}
+
+.star-rating label {
+    font-size: 2.125rem;
+    color: #cbd5e1;
+    cursor: pointer;
+    line-height: 1;
+    transition: color 0.15s ease, transform 0.12s ease;
+}
+
+.star-rating label:hover {
+    transform: scale(1.15);
+}
+
+.star-rating input:checked ~ label,
+.star-rating label:hover,
+.star-rating label:hover ~ label {
+    color: var(--umb-gold);
+    text-shadow: 0 0.0625rem 0.25rem rgba(202, 138, 4, 0.4);
+}
+
+.rating-hint-text {
+    display: block;
+    font-size: 0.75rem;
+    color: #64748b;
+    margin-top: 0.25rem;
+}
+
+.feedback-textarea {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 0.625rem 0.75rem;
+    border: 0.0625rem solid var(--border-color);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-family: inherit;
+    color: var(--slate-dark);
+    line-height: 1.5;
+    outline: none;
+    resize: vertical;
+    transition: border-color 0.2s ease;
+}
+
+.feedback-textarea:focus {
+    border-color: var(--umb-blue);
+}
+
+/* Success Card */
+.feedback-success-card {
+    background: #f0fdf4;
+    border: 0.0625rem solid #bbf7d0;
+    border-radius: 0.5rem;
+    padding: 1.75rem;
+    text-align: center;
+    margin-top: 0.5rem;
+}
+
+.success-icon-check {
+    width: 3.25rem;
+    height: 3.25rem;
+    border-radius: 50%;
+    background-color: #22c55e;
+    color: #ffffff;
+    font-size: 1.75rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 0.875rem auto;
+    box-shadow: 0 0.25rem 0.75rem rgba(34, 197, 94, 0.3);
+}
+
+.feedback-success-card h3 {
+    color: #166534;
+    font-size: 1.35rem;
+    margin: 0 0 0.5rem 0;
+}
+
+.feedback-success-card p {
+    color: #14532d;
+    font-size: 0.875rem;
+    line-height: 1.55;
+    margin: 0 0 1.25rem 0;
+}
+
+.success-actions-cluster {
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+/* ==========================================================================
+   11. RESPONSIVE MEDIA QUERIES
    ========================================================================== */
 @media (max-width: 62rem) { /* 992px */
     .container { padding: 1.5rem; }
@@ -2532,14 +2865,18 @@ body.page-faq {
 }
 
 @media (max-width: 56.25rem) { /* 900px */
-    .page-home .features-grid {
-        grid-template-columns: 1fr;
-        gap: 1.5rem;
-    }
+    .page-home .features-grid { grid-template-columns: 1fr; gap: 1.5rem; }
+}
+
+@media (max-width: 54rem) { /* 864px */
+    .course-card-unified { flex-direction: column; align-items: stretch; gap: 0.875rem; }
+    .course-actions-right { justify-content: space-between; width: 100%; border-top: 0.0625rem dashed #e2e8f0; padding-top: 0.75rem;}
+    .course-time-badge { text-align: left; }
 }
 
 @media (max-width: 48rem) { /* 768px */
     .container { padding: 1rem 0.875rem; }
+    .feedback-card { padding: 1.25rem 1rem; }
     .header { flex-direction: column; }
     .candidate-header-row { flex-direction: column; align-items: stretch; }
     .course-card-unified, .course-actions-right { flex-direction: column; align-items: stretch; }
@@ -2553,6 +2890,17 @@ body.page-faq {
     .candidate-header-row .search-box-wrapper { width: 100%; max-width: 100%; min-width: 0; }
     .audit-actions-bottom-right { justify-content: stretch; }
     .btn-jump-generator { width: 100%; text-align: center; }
+    .feedback-banner-actions {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    .feedback-banner-actions a {
+        width: 100%;
+        text-align: center;
+    }
+    .course-action-buttons { width: 100%; max-width: 100%; min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 0.375rem }
 }
 
 @media (max-width: 30rem) { /* 480px */
@@ -2560,4 +2908,5 @@ body.page-faq {
     .days-group { display: grid; grid-template-columns: 1fr 1fr; }
     .day-chip { justify-content: center; }
     .btn-primary, .btn-manual-entry, .page-home .btn-try-scheduler { width: 100%; }
+    .section-info-grid { grid-template-columns: 1fr; }
 }

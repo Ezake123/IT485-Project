@@ -36,6 +36,7 @@
                 <a href="{{ url_for('planner') }}" class="nav-link">Schedule builder</a>
                 <a href="{{ url_for('help_page') }}" class="nav-link">Help & Guide</a>
                 <a href="{{ url_for('faq_page') }}" class="nav-link active">FAQ</a>
+                <a href="{{ url_for('feedback_page') }}" class="nav-link">Feedback</a>
             </nav>
         </div>
     </header>
@@ -399,8 +400,9 @@
                         <line x1="16" y1="17" x2="8" y2="17"></line>
                         <polyline points="10 9 9 9 8 9"></polyline>
                     </svg>
-                    <span>Give Feedback</span>
+                    <span>Take Survey</span>
                 </a>
+                <a href="{{ url_for('feedback_page') }}" class="footer-btn">Feedback</a>
             </div>
         </div>
     </footer>

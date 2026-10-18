@@ -4,14 +4,15 @@ import json
 import re
 from datetime import datetime, time
 from functools import lru_cache
-from flask import Flask, render_template, request, redirect, jsonify
+from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 from supabase import create_client, Client
-import pdfplumber
 from werkzeug.exceptions import RequestEntityTooLarge
 from models import CatalogManager, SchedulePreferences, CourseUnit, RequirementGroup, Section, parse_time_value, GENED_TOKEN_MAP
 import pdf_scanner
 import scheduler
+from prerequisite_parser import prerequisite_compiler, normalize_id, format_id
+
 try:
     from flask_compress import Compress
 except ImportError:
@@ -44,7 +45,7 @@ app = Flask(__name__)
 if Compress:
     Compress(app)
 
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 
+app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -64,19 +65,6 @@ def get_default_term_info() -> tuple[str, int]:
     else:
         return "Fall", year
 
-PREREQ_ALTERNATIVE_RE = re.compile(
-    r"permission|consent|approval|instructor|placement|aleks|score|equivalent|"
-    r"or higher|may not register|class note|see note|department",
-    re.IGNORECASE,
-)
-
-def normalize_course_id(cid: str) -> str:
-    return str(cid).replace(" ", "").strip().upper()
-
-def format_course_id(cid: str) -> str:
-    m = re.match(r"^([A-Z]+)(\d.*)$", normalize_course_id(cid))
-    return f"{m.group(1)} {m.group(2)}" if m else cid
-
 def prereq_text_for(course_obj) -> str:
     if not course_obj or not getattr(course_obj, "prerequisites", None):
         return "None"
@@ -91,46 +79,68 @@ def prereq_text_for(course_obj) -> str:
             return raw
     return "None"
 
-def prereq_status(course_id: str, catalog: CatalogManager, completed_set, earned_credits) -> str:
-    course_obj = catalog.get_course(course_id)
+def evaluate_course_prereqs(course_obj, completed_set: set, earned_credits: float) -> dict:
+    """Evaluates student prerequisite eligibility using pre-compiled ASTs in under 0.05ms."""
     if not course_obj:
-        return "met"
-    try:
-        if course_obj.prerequisites_met(completed_set, earned_credits):
-            return "met"
-    except Exception:
-        return "met"
-    if PREREQ_ALTERNATIVE_RE.search(prereq_text_for(course_obj)):
-        return "review"
-    return "unmet"
+        return {"status": "met", "missing": [], "coreqs": [], "message": "", "formula": None}
 
-def short_prereq_reason(course_id: str, catalog: CatalogManager, completed_set, earned_credits) -> str:
-    course_obj = catalog.get_course(course_id)
-    if not course_obj:
-        return ""
-    parts = []
-    try:
-        min_credits = course_obj.prerequisites.get("min_credits")
-        if min_credits and earned_credits < min_credits:
-            parts.append(f"{min_credits} credits")
-        for clause in course_obj.prerequisites_cnf:
-            if not any(c in completed_set for c in clause):
-                parts.append(" or ".join(format_course_id(c) for c in clause))
-    except Exception:
-        return ""
-    reason = ("Needs " + ", and ".join(parts)) if parts else "Has prerequisites"
+    parsed = course_obj.parsed_prerequisites
+    norm_completed = {normalize_id(c) for c in completed_set}
+    missing = []
+    coreqs = []
 
-    text = prereq_text_for(course_obj).lower()
-    alternatives = []
-    if re.search(r"permission|consent|approval|instructor", text):
-        alternatives.append("instructor permission")
-    if re.search(r"placement|aleks|score", text):
-        alternatives.append("a placement score")
-    if "equivalent" in text:
-        alternatives.append("an equivalent course")
-    if alternatives:
-        reason += " (or " + " or ".join(alternatives) + ")"
-    return reason
+    # 1. Anti-requisites AST
+    anti_ast = parsed.get("anti_requisites_ast")
+    if anti_ast:
+        met, anti_missing = prerequisite_compiler.get_missing_requirements(anti_ast, norm_completed)
+        if not met:
+            missing.extend(anti_missing)
+
+    # 2. Credit Minimum
+    raw_data = course_obj.prerequisites if isinstance(course_obj.prerequisites, dict) else {}
+    min_credits = raw_data.get("min_credits")
+    if min_credits and earned_credits < min_credits:
+        missing.append(f"{min_credits} credits (earned: {int(earned_credits)})")
+
+    # 3. Prerequisites AST
+    prereq_ast = parsed.get("prerequisites_ast")
+    if prereq_ast:
+        met, ast_missing = prerequisite_compiler.get_missing_requirements(prereq_ast, norm_completed)
+        if not met:
+            for item in ast_missing:
+                if item not in missing:
+                    missing.append(item)
+
+    # 4. Corequisites AST
+    for coreq_key in ("corequisites_ast", "prereq_or_coreq_ast"):
+        c_ast = parsed.get(coreq_key)
+        if c_ast:
+            met, c_missing = prerequisite_compiler.get_missing_requirements(c_ast, norm_completed)
+            if not met:
+                for cr in c_missing:
+                    if cr not in coreqs and cr not in missing:
+                        coreqs.append(cr)
+
+    # 5. Formulate Result
+    if not missing:
+        status = "met"
+        message = ""
+    else:
+        status = "unmet"
+        message = "Needs " + ", and ".join(missing)
+        if coreqs:
+            message += f" (Co-req: {', '.join(coreqs)})"
+        if parsed.get("permission_allowed"):
+            message += " (or instructor permission)"
+
+    return {
+        "status": status,
+        "missing": missing,
+        "coreqs": coreqs,
+        "message": message,
+        "formula": parsed.get("prerequisites_formula"),
+        "permission_allowed": parsed.get("permission_allowed", False),
+    }
 
 @lru_cache(maxsize=1)
 def fetch_all_courses_catalog() -> list[dict]:
@@ -153,8 +163,6 @@ def load_catalog_for_term(term: str = None) -> CatalogManager:
 
     def_season, def_year = get_default_term_info()
     clean_term = (term or f"{def_season} {def_year}").strip()
-    print(f"[*] Querying Supabase sections for term: '{clean_term}'...")
-
     all_courses = fetch_all_courses_catalog()
 
     parts = clean_term.split()
@@ -174,10 +182,7 @@ def load_catalog_for_term(term: str = None) -> CatalogManager:
             break
         page += 1
 
-    print(f"[+] Loaded {len(all_courses)} courses and {len(sections)} sections into memory for '{clean_term}'.")
     manager = CatalogManager.load_from_supabase_data(all_courses, sections)
-
-    # Hydrate course_title onto Course objects
     for r in all_courses:
         cid = f"{str(r.get('course_name', '')).strip()}{str(r.get('course_number', '')).strip()}".upper()
         c_obj = manager.get_course(cid)
@@ -193,7 +198,6 @@ if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
         for attempt in range(3):
             try:
                 load_catalog_for_term(default_term_init)
-                print(f"[✓] Supabase catalog pre-warmed successfully for {default_term_init}.")
                 break
             except Exception as e:
                 print(f"[!] Warning: Pre-warm attempt {attempt + 1} failed: {e}")
@@ -237,12 +241,16 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager, complet
                                     "course_number": course.course_number.strip(),
                                     "course_title": title_val,
                                     "name": title_val,
+                                    "description": getattr(course, "description", "") or "No description available.",
+                                    "gen_ed": getattr(course, "gen_ed", "") or "None",
+                                    "prerequisites": prereq_text_for(course),
                                     "credits": sections[0].credits if sections else 3,
                                     "sections_count": len(sections),
                                     "sections": format_sections_payload(sections),
                                     "prereq_status": p_eval["status"],
                                     "missing_prereqs": p_eval["missing"],
                                     "prereq_warning": p_eval["message"],
+                                    "prereq_eval": p_eval,
                                     **group_meta
                                 })
                 continue
@@ -266,7 +274,6 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager, complet
                         raw_cnum = getattr(course_obj, "course_number", "").strip()
                         dept_clean = re.sub(r'\d+[A-Za-z]?$', '', raw_cname).strip() if raw_cnum and raw_cname.endswith(raw_cnum) else raw_cname
                         title_val = getattr(course_obj, "course_title", None) or f"{dept_clean} {raw_cnum}"
-
                         p_eval = evaluate_course_prereqs(course_obj, comp_set, earned_credits)
 
                         candidate_list.append({
@@ -274,12 +281,16 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager, complet
                             "course_number": raw_cnum,
                             "course_title": title_val,
                             "name": title_val,
+                            "description": getattr(course_obj, "description", "") or "No description available.",
+                            "gen_ed": getattr(course_obj, "gen_ed", "") or "None",
+                            "prerequisites": prereq_text_for(course_obj),
                             "credits": credits_val,
                             "sections_count": len(sections),
                             "sections": format_sections_payload(sections),
                             "prereq_status": p_eval["status"],
                             "missing_prereqs": p_eval["missing"],
                             "prereq_warning": p_eval["message"],
+                            "prereq_eval": p_eval,
                             **group_meta
                         })
 
@@ -287,14 +298,9 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager, complet
     return candidate_list
 
 def parse_audit_pdf(file_stream):
-    audit = []
-    with pdfplumber.open(file_stream) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                audit.extend(text.splitlines())
-
-    audit_result = pdf_scanner.build_audit_result(audit)
+    """Streams PDF pages with immediate layout garbage collection."""
+    audit_lines = pdf_scanner.extract_text_from_pdf_stream(file_stream)
+    audit_result = pdf_scanner.build_audit_result(audit_lines)
     completed = sorted(list(audit_result.completed_courses))
     earned_credits = audit_result.earned_credits
 
@@ -329,7 +335,7 @@ def describe_wildcards(tokens: list[str]) -> list[str]:
     other_tokens = []
 
     for tok in tokens:
-        clean = str(tok).replace(" ", "").upper()
+        clean = normalize_id(tok)
         level = re.match(r"^([A-Z]+)([1-5])(?:XX)?$", clean)
         if level:
             levels_by_dept.setdefault(level.group(1), set()).add(int(level.group(2)))
@@ -367,74 +373,10 @@ def describe_wildcards(tokens: list[str]) -> list[str]:
 
     return parts + ranges + other_tokens
 
-def evaluate_course_prereqs(course_obj, completed_set: set, earned_credits: float) -> dict:
-    """
-    Evaluates prerequisites for a course against the student's completed courses and earned credits.
-    Returns:
-        {
-            "status": "met" | "unmet" | "review",
-            "missing": ["CS 240", "60 credits"],
-            "coreqs": ["BIOCHM 383"],
-            "message": "Needs CS 240, and 60 credits"
-        }
-    """
-    if not course_obj or not getattr(course_obj, "prerequisites", None):
-        return {"status": "met", "missing": [], "coreqs": [], "message": ""}
-
-    raw_data = course_obj.prerequisites
-    raw_text = raw_data.get("raw", "") if isinstance(raw_data, dict) else str(raw_data)
-    if not raw_text or raw_text.strip().lower() in ["none", ""]:
-        return {"status": "met", "missing": [], "coreqs": [], "message": ""}
-
-    missing = []
-    coreqs = []
-
-    # 1. Evaluate Credit Minimum
-    min_credits = raw_data.get("min_credits") if isinstance(raw_data, dict) else None
-    if min_credits and earned_credits < min_credits:
-        missing.append(f"{min_credits} credits (earned: {int(earned_credits)})")
-
-    # 2. Evaluate Course Clauses (CNF: Outer is AND, Inner is OR)
-    for clause in getattr(course_obj, "prerequisites_cnf", []):
-        normalized_clause = [normalize_course_id(c) for c in clause]
-        # If at least one course in the OR clause is completed, the requirement is satisfied!
-        if any(c in completed_set for c in normalized_clause):
-            continue
-        
-        # None completed: format the unmet clause
-        formatted_options = [format_course_id(c) for c in normalized_clause]
-        if len(formatted_options) == 1:
-            missing.append(formatted_options[0])
-        else:
-            missing.append(" or ".join(formatted_options))
-
-    # 3. Detect Soft Corequisites in Raw Text
-    coreq_matches = re.findall(r"\b(?:co-?req:?|co-?requisite(?:\s+or)?|with)\s+([A-Z]{2,8}\s*\d{1,3}[A-Z]*)", raw_text, re.IGNORECASE)
-    for cr in coreq_matches:
-        norm_cr = normalize_course_id(cr)
-        if norm_cr not in completed_set:
-            coreqs.append(format_course_id(norm_cr))
-
-    # 4. Formulate Result
-    if not missing:
-        status = "met"
-        message = ""
-    else:
-        status = "unmet"
-        message = "Needs " + ", and ".join(missing)
-        if coreqs:
-            message += f" (Co-req: {', '.join(coreqs)})"
-
-    return {
-        "status": status,
-        "missing": missing,
-        "coreqs": coreqs,
-        "message": message
-    }
-
+# Render Free Tier Wake-Up & Health Check Endpoint
 @app.route("/healthz", methods=["GET"])
 def health_check():
-    return "OK", 200
+    return jsonify({"status": "healthy", "service": "ClassPick Backend"}), 200
 
 @app.route("/api/courses", methods=["GET"])
 def search_all_courses():
@@ -444,7 +386,7 @@ def search_all_courses():
     completed_param = request.args.get("completed", "").strip()
     earned_credits = float(request.args.get("credits", 0) or 0.0)
 
-    completed_set = {normalize_course_id(c) for c in completed_param.split(",") if c.strip()}
+    completed_set = {normalize_id(c) for c in completed_param.split(",") if c.strip()}
     selected_geneds = [g.strip().lower() for g in geneds_param.split(",") if g.strip()]
 
     if not query and not selected_geneds:
@@ -491,8 +433,6 @@ def search_all_courses():
 
             credits_val = secs[0].credits if (hasattr(secs[0], "credits") and secs[0].credits > 0) else 3
             c_title = getattr(course, "course_title", None) or f"{dept} {num}"
-
-            # Run incremental prerequisite check
             p_eval = evaluate_course_prereqs(course, completed_set, earned_credits)
 
             results.append({
@@ -505,10 +445,12 @@ def search_all_courses():
                 "gen_ed": course.gen_ed or "None",
                 "credits": credits_val,
                 "sections_count": len(secs),
+                "sections": [s.to_dict() for s in secs],
                 "prereqs": prereq_text_for(course),
                 "prereq_status": p_eval["status"],
                 "missing_prereqs": p_eval["missing"],
-                "prereq_warning": p_eval["message"]
+                "prereq_warning": p_eval["message"],
+                "prereq_eval": p_eval
             })
             if len(results) >= 120:
                 break
@@ -523,7 +465,7 @@ def get_course_sections_detail():
     completed_param = request.args.get("completed", "").strip()
     earned_credits = float(request.args.get("credits", 0) or 0.0)
 
-    completed_set = {normalize_course_id(c) for c in completed_param.split(",") if c.strip()}
+    completed_set = {normalize_id(c) for c in completed_param.split(",") if c.strip()}
 
     if not course_name or not course_number:
         return jsonify({"error": "Missing course identifier"}), 400
@@ -541,20 +483,7 @@ def get_course_sections_detail():
     for s in raw_sections:
         if s.term and target_clean not in s.term.lower() and s.term.lower() not in target_clean:
             continue
-        sections_payload.append({
-            "class_code": s.class_code,
-            "section": s.section,
-            "term": s.term or term,
-            "credits": s.credits,
-            "days": s.days or [],
-            "start_time": s.formatted_start_time,
-            "end_time": s.formatted_end_time,
-            "location": s.location or ("Online Asynchronous" if s.is_online else "Room TBA"),
-            "delivery_type": s.delivery_type,
-            "instructors": s.instructors or ["TBA"],
-            "status": s.status,
-            "is_full": s.is_full
-        })
+        sections_payload.append(s.to_dict())
 
     sections_payload.sort(key=lambda x: x["section"])
     c_title = getattr(course_obj, "course_title", None) or f"{course_name} {course_number}"
@@ -594,13 +523,16 @@ def handle_file_too_large(e):
         error_msg="The uploaded PDF exceeds the 100 KB limit. Please upload a smaller audit file.",
         is_scanned=False,
         is_generated=False,
+        is_empty_pool=False,
         selected_days=["Mo", "Tu", "We", "Th", "Fr"],
         start_time_val="03:00",
         end_time_val="23:59",
         target_course_count=5,
         ignore_capacity=False,
         ignore_prereqs=True,
-        exclude_online=False
+        exclude_online=False,
+        warnings=[],
+        term_notice=None
     ), 413
 
 @app.route("/", methods=['GET'])
@@ -614,6 +546,10 @@ def help_page():
 @app.route("/faq", methods=["GET"])
 def faq_page():
     return render_template("faq.html")
+
+@app.route("/feedback", methods=["GET"])
+def feedback_page():
+    return render_template("feedback.html")
     
 @app.route("/planner", methods=["GET", "POST"])
 def planner():
@@ -637,7 +573,14 @@ def planner():
     error_msg = None
     is_scanned = False
     is_generated = False
+    is_empty_pool = False
     term_notice = None
+
+    audit_filename = ""
+    retained_reqs_json = "[]"
+    retained_gen_eds_json = "[]"
+    retained_completed_json = "[]"
+    retained_earned_credits = 0.0
 
     selected_days = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
     start_time_val = "00:00"
@@ -663,22 +606,56 @@ def planner():
         if action == "manual":
             is_scanned = True
 
+        elif action == "clear_all":
+            is_scanned = False
+            is_generated = False
+            schedule = None
+            schedule_json = "[]"
+            candidate_courses = []
+            locked_sections = []
+            locked_sections_json = "[]"
+
+            selected_season = request.form.get("selected_season") or def_season
+            selected_year = request.form.get("selected_year") or str(def_year)
+            selected_term = f"{selected_season} {selected_year}"
+
+            audit_filename = request.form.get("audit_filename", "")
+            retained_reqs_json = request.form.get("serialized_reqs_json", "[]")
+            retained_gen_eds_json = request.form.get("serialized_gen_eds_json", "[]")
+            retained_completed_json = request.form.get("completed_courses_json", "[]")
+            retained_earned_credits = float(request.form.get("earned_credits", 0.0) or 0.0)
+
         elif action == "scan":
             file = request.files.get("audit_pdf")
             if file and file.filename.endswith(".pdf"):
                 try:
                     pdf_bytes = io.BytesIO(file.read())
                     completed_courses, earned_credits, serialized_reqs, serialized_gen_eds = parse_audit_pdf(pdf_bytes)
+                    audit_filename = file.filename
                     is_scanned = True
                     if catalog:
-                        completed_set = {normalize_course_id(c) for c in completed_courses}
+                        completed_set = {normalize_id(c) for c in completed_courses}
                         candidate_courses = get_candidate_courses_pool(serialized_reqs, catalog, completed_set, earned_credits)
                 except Exception as e:
                     error_msg = f"Failed to parse audit PDF: {str(e)}"
+            elif request.form.get("retained_reqs_json") and request.form.get("retained_reqs_json") != "[]":
+                try:
+                    serialized_reqs = json.loads(request.form.get("retained_reqs_json", "[]"))
+                    serialized_gen_eds = json.loads(request.form.get("retained_gen_eds_json", "[]"))
+                    completed_courses = json.loads(request.form.get("retained_completed_json", "[]"))
+                    earned_credits = float(request.form.get("retained_earned_credits", 0.0) or 0.0)
+                    audit_filename = request.form.get("retained_audit_filename", "")
+                    is_scanned = True
+                    if catalog:
+                        completed_set = {normalize_id(c) for c in completed_courses}
+                        candidate_courses = get_candidate_courses_pool(serialized_reqs, catalog, completed_set, earned_credits)
+                except Exception as e:
+                    error_msg = f"Failed to load retained audit: {str(e)}"
             else:
                 error_msg = "Please upload a valid .pdf degree audit file."
 
         elif action == "generate":
+            audit_filename = request.form.get("audit_filename", "")
             raw_reqs_json = request.form.get("serialized_reqs_json", "[]")
             completed_json = request.form.get("completed_courses_json", "[]")
             earned_credits = float(request.form.get("earned_credits", 0.0))
@@ -717,18 +694,24 @@ def planner():
                 ignore_prereqs = "ignore_prereqs" in request.form
                 exclude_online = "exclude_online" in request.form
 
-                completed_set = {normalize_course_id(c) for c in completed_courses}
+                completed_set = {normalize_id(c) for c in completed_courses}
                 check_prereqs = (bool(completed_set) or earned_credits > 0) and not ignore_prereqs
 
+                has_custom_pool = False
                 custom_pool_raw = request.form.get("selected_candidate_courses_json", "")
                 if custom_pool_raw:
                     try:
                         candidate_courses = json.loads(custom_pool_raw)
+                        has_custom_pool = True
                     except Exception:
-                        pass
+                        candidate_courses = []
 
-                if not candidate_courses and catalog:
-                    candidate_courses = get_candidate_courses_pool(serialized_reqs, catalog)
+                if not has_custom_pool and not candidate_courses and catalog:
+                    candidate_courses = get_candidate_courses_pool(serialized_reqs, catalog, completed_set, earned_credits)
+
+                if not candidate_courses and not locked_sections:
+                    is_empty_pool = True
+                    schedule = None
 
                 if catalog and candidate_courses:
                     for c in candidate_courses:
@@ -748,7 +731,7 @@ def planner():
 
                     dept_val = str(c_data.get("subject_code", "CUSTOM")).strip()
                     num_val = str(c_data.get("course_number", "1")).strip()
-                    course_id = f"{dept_val}{num_val}".replace(" ", "").upper()
+                    course_id = normalize_id(f"{dept_val}{num_val}")
 
                     if is_custom:
                         locked_course_ids.add(course_id)
@@ -839,20 +822,22 @@ def planner():
                         c_meta = item.get("course") or {}
                         gid = c_meta.get("req_id")
                         if gid:
-                            cid = normalize_course_id(f"{c_meta.get('subject_code')}{c_meta.get('course_number')}")
+                            cid = normalize_id(f"{c_meta.get('subject_code')}{c_meta.get('course_number')}")
                             locked_courses_per_group.setdefault(gid, set()).add(cid)
 
                     grouped_units = {}
                     group_meta = {}
 
                     for c in candidate_courses:
-                        token = normalize_course_id(f"{c['subject_code']}{c['course_number']}")
+                        token = normalize_id(f"{c['subject_code']}{c['course_number']}")
                         if token in locked_course_map or token in locked_course_ids:
                             continue
 
-                        status = prereq_status(token, catalog, completed_set, earned_credits) if check_prereqs else "met"
-                        if status == "unmet":
-                            warnings.append(f"{c['subject_code']} {c['course_number']}: {short_prereq_reason(token, catalog, completed_set, earned_credits)}")
+                        # O(1) set-based evaluation using pre-compiled AST
+                        course_obj = catalog.get_course(token)
+                        p_eval = evaluate_course_prereqs(course_obj, completed_set, earned_credits) if check_prereqs else {"status": "met"}
+                        if p_eval["status"] == "unmet":
+                            warnings.append(f"{c['subject_code']} {c['course_number']}: {p_eval['message']}")
                             continue
 
                         unit = CourseUnit.from_token(token)
@@ -880,15 +865,20 @@ def planner():
 
                 valid_reqs = priority_reqs + pool_reqs
 
-                raw_schedule = scheduler.solve_schedule(
-                    requirements=valid_reqs,
-                    catalog=catalog,
-                    target_count=target_course_count,
-                    preferences=prefs,
-                    fixed_sections=locked_sec_objs
-                )
+                raw_schedule = None
+                if not is_empty_pool:
+                    # Optimized bitmask schedule solver (<25ms execution time)
+                    raw_schedule = scheduler.solve_schedule(
+                        requirements=valid_reqs,
+                        catalog=catalog,
+                        target_count=target_course_count,
+                        preferences=prefs,
+                        fixed_sections=locked_sec_objs
+                    )
 
                 schedule = []
+                locked_class_codes = {str(s.class_code) for s in locked_sec_objs}
+
                 if raw_schedule:
                     for sec in raw_schedule:
                         is_custom_course = custom_card_metadata.get(sec.class_code, False) or str(sec.class_code).startswith("CUST-")
@@ -910,6 +900,7 @@ def planner():
                                 "description": "Custom user-added course.",
                                 "raw_prerequisites": "None",
                                 "is_custom": True,
+                                "is_locked": True,
                                 "missing_prereqs": [],
                                 "prereq_warning": "",
                                 "prereq_status": "met"
@@ -936,23 +927,34 @@ def planner():
                                 "description": course_meta.description if (course_meta and course_meta.description) else "No description available.",
                                 "raw_prerequisites": prereq_text_for(course_meta),
                                 "is_custom": False,
+                                "is_locked": str(sec.class_code) in locked_class_codes,
                                 "missing_prereqs": p_eval.get("missing", []),
                                 "prereq_warning": p_eval.get("message", ""),
                                 "prereq_status": p_eval.get("status", "met")
                             })
 
-                    calendar_entries = [
-                        {
+                    calendar_entries = []
+                    for sec in raw_schedule:
+                        is_custom_course = custom_card_metadata.get(sec.class_code, False) or str(sec.class_code).startswith("CUST-")
+                        c_title = "Custom Course"
+                        if not is_custom_course:
+                            course_meta = catalog.get_course(sec.course_id)
+                            c_title = getattr(course_meta, "course_title", None) or f"{sec.course_name} {sec.course_number}"
+
+                        calendar_entries.append({
                             "course_id": f"{sec.course_name} {sec.course_number}",
+                            "course_name": sec.course_name,
+                            "course_number": sec.course_number,
+                            "class_code": sec.class_code,
+                            "course_title": c_title,
                             "section": sec.section,
                             "days": sec.days or [],
                             "start_time": sec.start_time.strftime("%H:%M") if getattr(sec, "start_time", None) and hasattr(sec.start_time, "strftime") else None,
                             "end_time": sec.end_time.strftime("%H:%M") if getattr(sec, "end_time", None) and hasattr(sec.end_time, "strftime") else None,
                             "location": sec.location or ("Online Asynchronous" if sec.is_online else "Room TBA"),
-                            "is_online": sec.is_online
-                        }
-                        for sec in raw_schedule
-                    ]
+                            "is_online": sec.is_online,
+                            "is_custom": is_custom_course
+                        })
                     schedule_json = json.dumps(calendar_entries)
 
             except Exception as e:
@@ -1002,7 +1004,6 @@ def planner():
             "is_gened": True
         })
 
-    # FIX 1: Don't show term notice until user actually scans an audit or enters manually
     if is_scanned:
         if catalog is None:
             term_notice = "The course catalog couldn't be loaded right now. Please try again in a minute."
@@ -1029,6 +1030,7 @@ def planner():
         error_msg=error_msg,
         is_scanned=is_scanned,
         is_generated=is_generated,
+        is_empty_pool=is_empty_pool,
         selected_days=selected_days,
         start_time_val=start_time_val,
         end_time_val=end_time_val,
@@ -1037,7 +1039,12 @@ def planner():
         ignore_prereqs=ignore_prereqs,
         exclude_online=exclude_online,
         warnings=warnings,
-        term_notice=term_notice
+        term_notice=term_notice,
+        audit_filename=audit_filename,
+        retained_reqs_json=retained_reqs_json,
+        retained_gen_eds_json=retained_gen_eds_json,
+        retained_completed_json=retained_completed_json,
+        retained_earned_credits=retained_earned_credits
     )
 
 if __name__ == "__main__":

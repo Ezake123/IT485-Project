@@ -1,5 +1,7 @@
 import pdfplumber
 import re
+from io import BytesIO
+from typing import List, Union
 from models import CourseUnit, RequirementGroup, DegreeAuditResult, KNOWN_GENED_CATEGORIES
 
 #-----------------------------------------------------------------
@@ -16,19 +18,35 @@ from models import CourseUnit, RequirementGroup, DegreeAuditResult, KNOWN_GENED_
 
 MAX_ALLOWED_PAGES = 20
 
+def extract_text_from_pdf_stream(pdf_file: Union[BytesIO, bytes]) -> List[str]:
+    """
+    Streams PDF pages one-by-one and flushes pdfminer cache immediately after each page.
+    Prevents Render 512MB Out-Of-Memory container crashes.
+    """
+    lines = []
+    stream = BytesIO(pdf_file) if isinstance(pdf_file, (bytes, bytearray)) else pdf_file
+    with pdfplumber.open(stream) as pdf:
+        num_pages = min(len(pdf.pages), MAX_ALLOWED_PAGES)
+        for i in range(num_pages):
+            page = pdf.pages[i]
+            text = page.extract_text()
+            if text:
+                lines.extend(text.splitlines())
+            # Explicit cache flush to release LTTextBox layout trees immediately
+            if hasattr(page, "flush_cache"):
+                page.flush_cache()
+    return lines
+
 def clean_title_str(text: str) -> str:
     if not text:
         return ""
-    # Strip parenthetical notes like (THROUGH 19SU)
     cleaned = re.sub(r"\([^)]*\)", "", text)
-    # Strip leading/trailing punctuation and extra whitespace
     cleaned = re.sub(r"^[\s:\-]+", "", cleaned)
     cleaned = re.sub(r"[\s:\-]+$", "", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip()
 
 def is_table_header_line(line: str) -> bool:
-    """Checks if a line contains table column headers like 'Term Course Credits Grade Title'."""
     clean = line.replace("|", " ").strip()
     norm = re.sub(r"\s+", " ", clean).lower()
     if "term course credits grade title" in norm or "title credits grade course term" in norm:
@@ -37,24 +55,14 @@ def is_table_header_line(line: str) -> bool:
     return "term" in words and "credits" in words and bool(words.intersection({"course", "grade", "title"}))
 
 def is_needs_line(line: str) -> bool:
-    """Checks if a line starts with 'Needs:'."""
     clean = line.replace("|", " ").strip()
     return bool(re.match(r"^Needs:", clean, re.IGNORECASE))
 
 def parse_requirement_header(line: str) -> str | None:
-    """
-    Identifies the starting line of a requirement.
-    Matches:
-      - Lines starting with '1)', '3)', 'OR)', '- 1)', '+ 2)', 'ip - 7)'
-      - Lines starting with '- ' followed by text (e.g. '- Micro/Macro Economics Courses')
-      - Standalone section titles ending with 'Courses' or 'Requirement' (not starting with 'Take' or 'Select')
-    Returns the initial cleaned title text from that line.
-    """
     clean = line.strip()
     if not clean:
         return None
 
-    # Guard 1: Skip system dividers, legend entries, and end markers
     if re.search(r"\b(?:LEGEND|END OF ANALYSIS|SUMMARY OF COURSES|TABLE|COLLEGESOURCE|DEGREE AUDIT PROGRAM)\b", clean, re.IGNORECASE):
         return None
     if "=" in clean or clean.startswith("- =") or clean.startswith("NO =") or clean.startswith("OK ="):
@@ -62,7 +70,6 @@ def parse_requirement_header(line: str) -> str | None:
     if re.match(r"^\*{4,}$", clean):
         return None
 
-    # Guard 2: Skip course rows and grades
     if re.search(r"\b\d{2}(?:FL|SP|SU|WR)\b", clean) and re.search(r"\b\d+\.\d{2}\b", clean):
         return None
     if re.search(r"\b\d+\.\d{2}\s+(?:[A-D][+-]?|F|P|IP|T[A-D][+-]?|TIP|WAIVE)\b", clean, re.IGNORECASE):
@@ -70,27 +77,22 @@ def parse_requirement_header(line: str) -> str | None:
     if re.match(r"^(?:[A-D][+-]?|T[A-D][+-]?|IP|TIP|P|F|\+|-|\+-|OK|NO)$", clean, re.IGNORECASE):
         return None
 
-    # Guard 3: Skip table column header rows & Needs
     if is_table_header_line(clean) or is_needs_line(clean):
         return None
     if re.match(r"^(?:Select from:|Earned:|In-Progress:|GPA\b)", clean, re.IGNORECASE):
         return None
 
-    # Pattern 1: Numbered lines with optional status prefix: "1) Take...", "3)CAPSTONE...", "OR) Take...", "ip - 7) ..."
     m1 = re.match(r"^(?:(?:ip\s*)?[-+*R]\s+)?(?:(\d+|OR))\)\s*(.*)$", clean, re.IGNORECASE)
     if m1:
         rest = m1.group(2).strip()
         return clean_title_str(rest)
 
-    # Pattern 2: Lines starting with a dash or asterisk: "- Micro/Macro Economics Courses"
     m2 = re.match(r"^(?:(?:ip\s*)?[-*]\s+)(.*)$", clean, re.IGNORECASE)
     if m2:
         rest = m2.group(1).strip()
         rest = re.sub(r"^(?:(?:\d+|OR)\))\s*", "", rest, flags=re.IGNORECASE)
         return clean_title_str(rest)
 
-    # Pattern 3: Standalone requirement titles (e.g. "Micro/Macro Economics Courses", "INTERNATIONAL MANAGEMENT REQUIREMENT")
-    # Must NOT start with 'Take', 'Select', or 'Choose' so instructional continuation lines are not misidentified
     if re.match(r"^(?!Take\b|Select\b|Choose\b)[A-Za-z0-9/ ]+\s+(?:Courses?|Requirements?)$", clean, re.IGNORECASE):
         if not re.search(r"\b(?:must be|completed|transferred|click on|grade of|check with|passed)\b", clean, re.IGNORECASE):
             return clean_title_str(clean)
@@ -126,7 +128,6 @@ def complete_course_scan(audit):
 
 def required_course_scan(all_lines):
     required_courses = []
-    
     needs_re = re.compile(
         r"Needs:.*?\b(\d+)\s*(Courses|Course|Sets|Set|Sub-Reqs|Sub-Req)\b",
         re.IGNORECASE
@@ -145,7 +146,6 @@ def required_course_scan(all_lines):
         
         if collecting and current_block_lines:
             raw_text = " ".join(current_block_lines)
-            
             cleaned = re.sub(r"\([^)]*\)", "", raw_text)
             cleaned = re.sub(r"\|", " ", cleaned)
             cleaned = re.sub(r"\bTERM\s+[A-Z0-9]{1,2}\s+COURSES\s*:?", " ", cleaned, flags=re.IGNORECASE)
@@ -188,7 +188,6 @@ def required_course_scan(all_lines):
                 elif current_dept and re.match(r"^\d{1,3}[A-Z]*$", tok):
                     first_course = f"{current_dept}{tok}"
                     
-                    # 1. Course range: "210L TO 491"
                     if i + 2 < len(tokens) and tokens[i + 1].upper() == "TO":
                         next_tok = tokens[i + 2]
                         if re.match(r"^\d{1,3}[A-Z]*$", next_tok):
@@ -207,7 +206,6 @@ def required_course_scan(all_lines):
                             i += 4
                             continue
 
-                    # 2. Alternative pair: "210 or 212"
                     if i + 2 < len(tokens) and tokens[i + 1].lower() == "or":
                         next_tok = tokens[i + 2]
                         if re.match(r"^\d{1,3}[A-Z]*$", next_tok):
@@ -226,7 +224,6 @@ def required_course_scan(all_lines):
                             i += 4
                             continue
 
-                    # 3. Corequisite pair: "252 & 256"
                     if i + 2 < len(tokens) and tokens[i + 1] == "&":
                         next_tok = tokens[i + 2]
                         if re.match(r"^\d{1,3}[A-Z]*$", next_tok):
@@ -267,23 +264,16 @@ def required_course_scan(all_lines):
         if not clean_line:
             continue
 
-        # If currently accumulating lines for a requirement title, check for stoppers
         if accumulating_title:
             is_stop = False
-            
-            # Stop 1: Encountered table header (e.g. 'Term Course Credits Grade Title')
             if is_table_header_line(clean_line):
                 is_stop = True
-            # Stop 2: Encountered 'Needs:' or count like '1 Course'
             elif is_needs_line(clean_line) or needs_re.search(clean_line) or re.match(r"^\d+\s*(?:Courses?|Course|Sub-Reqs?|Sets?)$", clean_line, re.IGNORECASE):
                 is_stop = True
-            # Stop 3: Encountered a new requirement header starting (numbered or dashed)
             elif re.match(r"^(?:(?:ip\s*)?[-+*R]\s+)?(?:(?:\d+|OR)\))", clean_line, re.IGNORECASE) or clean_line.startswith("- "):
                 is_stop = True
-            # Stop 4: Encountered 'Select from:'
             elif "Select from:" in clean_line:
                 is_stop = True
-            # Stop 5: Encountered a course row or divider
             elif (re.search(r"\b\d{2}(?:FL|SP|SU|WR)\b", clean_line) and re.search(r"\b\d+\.\d{2}\b", clean_line)) or re.match(r"^\*{4,}$", clean_line):
                 is_stop = True
 
@@ -291,12 +281,10 @@ def required_course_scan(all_lines):
                 accumulating_title = False
                 current_req_title = clean_title_str(" ".join(title_lines))
                 title_lines = []
-                # Fall through to process clean_line (Needs:, headers, etc.)
             else:
                 title_lines.append(clean_line)
                 continue
 
-        # Check for start of a requirement header
         header_title = parse_requirement_header(clean_line)
         if header_title is not None:
             finalize_block()
@@ -304,7 +292,6 @@ def required_course_scan(all_lines):
             title_lines = [header_title] if header_title else []
             continue
 
-        # Check for Needs:
         needs_match = needs_re.search(clean_line)
         if needs_match:
             finalize_block()
@@ -323,7 +310,6 @@ def required_course_scan(all_lines):
                 expecting_needs_count = False
                 continue
 
-        # Check for Select from:
         if "Select from:" in clean_line:
             finalize_block()
             collecting = True
@@ -426,8 +412,6 @@ def build_audit_result(all_lines: list) -> DegreeAuditResult:
     raw_blocks = normalize_uncounted_requirements(required_course_scan(all_lines))
 
     requirement_groups: list[RequirementGroup] = []
-
-    # Assign sequential numbers starting strictly at 1 for active unfulfilled requirements
     req_idx = 1
     for block in raw_blocks:
         needed = block.get("needed", 1)
@@ -440,13 +424,8 @@ def build_audit_result(all_lines: list) -> DegreeAuditResult:
             if not unit.is_completed(completed):
                 active_units.append(unit)
 
-        # Only increment index if the requirement is unfulfilled
         if active_units:
-            if title:
-                group_name = f"Requirement {req_idx} - {title}"
-            else:
-                group_name = f"Requirement {req_idx}"
-
+            group_name = f"Requirement {req_idx} - {title}" if title else f"Requirement {req_idx}"
             requirement_groups.append(
                 RequirementGroup(
                     group_name=group_name,
