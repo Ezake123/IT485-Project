@@ -1,9 +1,9 @@
-# IT485 - Group H.W.H.J Project Classpick
+# IT485 - Group H.W.H.J - Classpick
 UMASS Boston, Fall 2026
 
 By: Jiahong Huang, Hunter Ward, Hasan Algafri, William Ramos
 
-This project is about creating an optimized automated schedule planning tool for UMB students to save time from creating their schedule by scanning their degree audit. Not only will it help students, it can also assist academic counselor to provide better and faster guidance. 
+This project is about creating an automated schedule planning tool for UMB students by utilizing their degree audit. We aim to save a majority of the time that is wasted by students creating schedule on their own or with assists from advisors. Not only will it help students, it can also assist academic advisors to provide better and faster guidance. 
 
 ## Features:
 - Audit scanning: Extracts the completed courses and required courses from the audit.
@@ -28,6 +28,8 @@ This project is about creating an optimized automated schedule planning tool for
 - Supabase
   - Setup .env and put the URL and KEY in there
 - Render
+  - Setup requirements.txt
+  - Run "gunicorn --workers 1 --threads 2 --timeout 120 app:app" for most optimized hosting
 
 ## Cloning our repo
 git clone https://github.com/Ezake123/IT485-Project.git
