@@ -61,7 +61,11 @@
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>No. ClassPick is an independent UMass Boston IT capstone project built by students. It acts as an advising preparation companion to calculate conflict-free schedules. Official enrollment must always be finalized through WISER.</p>
+                                <p>No, ClassPick is an independent UMass Boston IT capstone project built by students. 
+                                    It acts as an course advising helper to generate conflict-free schedules. 
+                                    Official enrollment must be done through WISER and strongly encouraged to review
+                                    all the courses generated before enrolling.
+                                </p>
                             </div>
                         </div>
 
@@ -71,7 +75,9 @@
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>Never. Your degree audit is scanned in memory during your active browser session. No personal identifiers, grades, or transcripts are stored in our databases or saved onto external servers.</p>
+                                <p>Never, your degree audit is scanned in memory during your active browser session.
+                                     No personal identifiers, grades, or transcripts are stored in our databases or 
+                                     saved elsewhere.</p>
                             </div>
                         </div>
                     </div>
@@ -89,11 +95,13 @@
                         <!-- Question 1: Diversity Requirements -->
                         <div class="faq-q-item">
                             <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
-                                <span>Why doesn't ClassPick automatically solve United States or International Diversity requirements?</span>
+                                <span>Why doesn't ClassPick include United States or International Diversity requirements?</span>
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>The university's public course catalog feeds indicate General Education distribution codes (such as Humanities, Arts, or Natural Sciences), but they do not publish a standardized data attribute tagging whether a section fulfills the <strong>United States Diversity</strong> or <strong>International Diversity</strong> requirement. Because this metadata is absent from the underlying course database, ClassPick cannot verify or solve diversity designations algorithmically without risking false guarantees. Students should verify approved diversity attributes in WISER or consult their academic advisor.</p>
+                                <p>The university's public course catalog does not include any indication of diversity attributes to
+                                     the courses listed. Therefore, it would be impossible to know.
+                                </p>
                             </div>
                         </div>
 
@@ -104,7 +112,7 @@
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>Major-specific requirements (like Computer Science or Accounting cores) offer tightly defined course lists (e.g., <em>"Choose from CS 210, CS 240"</em> or <em>"AF 310, AF 311"</em>), which the solver can place directly into your candidate pool. In contrast, General Education distribution areas (such as Humanities or Social &amp; Behavioral Sciences) encompass hundreds of completely distinct subjects across campus. Automatically loading every possible university elective into the solver would overwhelm your course pool with unrelated classes you have no interest in taking. ClassPick displays your remaining elective counts as a checklist in the audit summary so you can use the <strong>Search All University Courses</strong> tool to choose specific electives that fit your personal academic goals.</p>
+                                <p>General Education distribution areas encompass hundreds of courses and so are level-specific courses, which if we automatically added all these courses into the generation pool would overwhelm the solver. Also it would be much better if the user reviewed the course and chose the one they like rather than blindly taking an unknown course that was randomly selected.</p>
                             </div>
                         </div>
 
@@ -138,7 +146,7 @@
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>ClassPick scans your completed courses and earned credit totals directly from your degree audit, then compares them against the university's course catalog prerequisite chains. If a course requires multiple prerequisites (for example, <em>AF 210</em> and <em>AF 211</em>) and you have already completed one of them, ClassPick only warns you about the specific requirement you have <strong>not</strong> yet fulfilled (e.g., <code>Needs AF 211</code>) rather than repeating courses you've already passed.</p>
+                                <p>ClassPick scans your completed courses and earned credit totals directly from your degree audit, then compares them against the university's course catalog prerequisite. If a course requires multiple prerequisites (for example, <em>AF 210</em> and <em>AF 211</em>) and you have already completed one of them, ClassPick only warns you about the specific requirement you have <strong>not</strong> yet fulfilled (e.g., <code>Needs AF 211</code>) rather than repeating courses you've already passed.</p>
                             </div>
                         </div>
 
@@ -160,18 +168,18 @@
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>Permissions and overrides are manual administrative decisions made between you, your professor, and department heads—often documented via email or permission forms rather than permanent transcript codes. Because an automated scheduler cannot know if an instructor has granted you an override, ClassPick does not block these courses. Instead, it flags them so you remember to contact the professor or department to obtain an enrollment permission number before registering in WISER.</p>
+                                <p>Permissions and overrides are manual administrative decisions made between you, your professor, and department heads—often documented via email or permission forms rather than permanent transcript codes. Because an automated scheduler cannot know if an instructor has granted you an override, ClassPick will block these courses. Use ignore prerequisites to bypass this.</p>
                             </div>
                         </div>
 
                         <!-- Question 4: Placement scores and student standing / majors -->
                         <div class="faq-q-item">
                             <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
-                                <span>What about placement exams (ALEKS) or major restrictions (e.g., "MGT majors only")?</span>
+                                <span>What about major/degree or year-level restrictions?</span>
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>Placement exam scores (like math ALEKS results) and administrative registration filters (such as <em>"Open to College of Management students only"</em> or <em>"Junior standing"</em>) are enforced live by WISER at the moment of enrollment. Because degree audits primarily track completed course credits rather than real-time registration permissions, ClassPick focuses on academic coursework and credit minimums. Always double-check program-specific registration notes in the WISER class search.</p>
+                                <p>Administrative registration filters (such as <em>"Open to College of Management students only"</em> or <em>"Junior standing"</em>) are enforced live by WISER at the moment of enrollment. Because degree audits primarily track completed course credits rather than real-time registration permissions, ClassPick focuses on academic coursework and credit minimums. Always double-check program-specific registration notes in the WISER class search.</p>
                             </div>
                         </div>
 
@@ -182,7 +190,7 @@
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>Many students take prerequisite courses concurrently, have pending transfer credits in evaluation, or receive prerequisite waivers from faculty advisors. Keeping this option checked ensures the timetable solver doesn't refuse to generate an otherwise perfect weekly schedule due to an automated mismatch. ClassPick will still display amber warning banners (<code>⚠️ Missing Prerequisite</code>) on any scheduled course card that needs attention so you can review it before registering.</p>
+                                <p>Many students often have ways to receive prerequisite waivers from faculty advisors. Keeping this option checked ensures the timetable solver doesn't refuse to generate an otherwise perfect weekly schedule due to an automated mismatch. ClassPick will still display amber warning banners (<code>⚠️ Missing Prerequisite</code>) on any scheduled course card that needs attention so you can review it before registering.</p>
                             </div>
                         </div>
 
@@ -233,7 +241,7 @@
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>In the "Search All University Courses" box, click the "Gen Ed (0)" dropdown. Check one or more categories (e.g. Humanities, Natural Sciences) to instantly filter all course offerings for the selected semester.</p>
+                                <p>In the "Search All University Courses" box, click the "Gen Ed (0)" dropdown. Check one or more categories to instantly filter all course offerings for the selected semester.</p>
                             </div>
                         </div>
 
@@ -259,7 +267,7 @@
                     <div class="faq-nested-group">
                         <div class="faq-q-item">
                             <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
-                                <span>Why are requirements grouped into accordions?</span>
+                                <span>Why are requirements grouped accordingly?</span>
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
@@ -273,7 +281,7 @@
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>The requirement quota automatically decrements in real-time. Once the quota reaches zero, the entire group is satisfied and safely hidden so the scheduler only looks for remaining unfulfilled slots.</p>
+                                <p>The requirement quota automatically decrements in real-time. Once the quota reaches zero, the entire group is satisfied and safely hidden so the scheduler only looks for remaining unfulfilled slots. The section lockedd will be passed onto the "Locked-In Section".</p>
                             </div>
                         </div>
                     </div>
@@ -323,7 +331,7 @@
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>Use this if you are enrolled in an independent study, work study, off-campus internship, or unlisted lab that isn't yet present in our database. It blocks out the time on your weekly timetable so no other classes collide with it.</p>
+                                <p>Use this if you are enrolled in an independent study, work study, off-campus internship, or unlisted courses that isn't yet present in our database. It blocks out the time on your weekly timetable so no other classes collide with it. Later you will have to manually go into WISER and sign up for that specific course that you've found.</p>
                             </div>
                         </div>
                     </div>
