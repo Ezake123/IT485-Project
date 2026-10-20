@@ -3,15 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>UMass Boston Course Schedule Planner</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=4.1">
+    <title>ClassPick - UMass Boston Schedule Planner</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}?v=8.1">
 
-    <!-- Standard Favicons -->
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='img/favicon-16x16.png') }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='img/favicon-32x32.png') }}">
     <link rel="icon" type="image/png" sizes="48x48" href="{{ url_for('static', filename='img/favicon-48x48.png') }}">
-
-    <!-- Apple Touch Icon (iOS Home Screen) -->
     <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='img/apple-touch-icon.png') }}">
 </head>
 <body class="page-home">
@@ -25,7 +22,7 @@
 
     <header class="site-header">
         <div class="shell header-nav-row">
-           <a href="{{ url_for('index') }}" class="header-brand">
+            <a href="{{ url_for('index') }}" class="header-brand">
                 <img src="{{ url_for('static', filename='img/android-chrome-512x512.png') }}" 
                     alt="ClassPick Logo" 
                     class="brand-logo-img">
@@ -37,6 +34,9 @@
             <nav class="nav-links" aria-label="Main navigation">
                 <a href="{{ url_for('index') }}" class="nav-link active">Home</a>
                 <a href="{{ url_for('planner') }}" class="nav-link">Schedule builder</a>
+                <a href="{{ url_for('help_page') }}" class="nav-link">Help & Guide</a>
+                <a href="{{ url_for('faq_page') }}" class="nav-link">FAQ</a>
+                <a href="{{ url_for('feedback_page') }}" class="nav-link">Feedback</a>
             </nav>
         </div>
     </header>
@@ -46,15 +46,12 @@
             <div class="hero-left">
                 <h1 class="hero-title">Build next semester's schedule from your degree audit.</h1>
                 <p class="hero-desc">
-                    ClassPick reads your UMB degree audit, finds what you still need, suggests courses you're eligible for, and lays them out with no time conflicts.
+                    ClassPick scans your official UMass Boston degree audit, calculates what you still need, checks course eligibility, and generates conflict-free schedules in seconds.
                 </p>
 
-                <div class="privacy-box">
-                    <strong>Privacy Notice:</strong> We do not keep, record, or store any of your information in any way or form. Your degree audit and selections are processed solely during your active browser session.
-                </div>
-
-                <div class="hero-actions">
+                <div class="hero-actions" style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
                     <a href="{{ url_for('planner') }}" class="btn-try-scheduler">Try scheduler</a>
+                    <a href="{{ url_for('help_page') }}" class="btn-try-scheduler btn-outline-white">How to Get Audit</a>
                 </div>
             </div>
 
@@ -62,27 +59,23 @@
                 <ol class="flow-list">
                     <li>
                         <b>Upload degree audit</b>
-                        <span>PDF downloaded from Wiser</span>
+                        <span>PDF downloaded directly from WISER</span>
                     </li>
                     <li>
                         <b>Identify remaining requirements</b>
-                        <span>What courses are left, by sections</span>
+                        <span>Automated detection of remaining course groups</span>
                     </li>
                     <li>
                         <b>Recommend eligible courses</b>
-                        <span>Prerequisites checked for you</span>
-                    </li>
-                    <li>
-                        <b>Extensive course searches</b>
-                        <span>Look for courses you want to take</span>
+                        <span>Prerequisites and eligibility checked for you</span>
                     </li>
                     <li>
                         <b>Generate a conflict-free schedule</b>
-                        <span>A visual of weekly schedule</span>
+                        <span>Interactive weekly timetable visualization</span>
                     </li>
                     <li>
-                        <b>List courses with class code</b>
-                        <span>Easy way to select the courses in Wiser</span>
+                        <b>Display class codes for registration</b>
+                        <span>Copy 4-digit codes directly into WISER enrollment</span>
                     </li>
                 </ol>
             </div>
@@ -94,82 +87,43 @@
             <div class="features-grid">
                 <div class="feature-item">
                     <h3>Private by design</h3>
-                    <p>Your audit is read in your browser. Nothing is uploaded, saved, or shared.</p>
+                    <p>Your audit is processed entirely in your session. Nothing is uploaded, saved, or shared.</p>
                 </div>
                 <div class="feature-item">
                     <h3>Advisor-friendly</h3>
-                    <p>ClassPick drafts the schedule. Your academic advisor can give the final guidance.</p>
+                    <p>ClassPick drafts the schedule. Your academic advisor can give final guidance.</p>
                 </div>
                 <div class="feature-item">
                     <h3>Instant Audit Scanning</h3>
-                    <p>Skips manually checking audit by parsing your completed courses and unfulfilled requirements in seconds.</p>
+                    <p>Parses your completed courses and unfulfilled requirements in seconds.</p>
                 </div>
                 <div class="feature-item">
                     <h3>Zero Conflict Generation</h3>
-                    <p>Eliminates hours of searching by automatically checking course times and section prerequisites.</p>
+                    <p>Eliminates hours of manual trial-and-error by solving valid meeting times automatically.</p>
                 </div>
                 <div class="feature-item">
                     <h3>Fast WISER Enrollment</h3>
-                    <p>Display class codes you can copy and paste directly into your WISER enrollment.</p>
+                    <p>Displays class codes you can copy and paste directly into your WISER shopping cart.</p>
                 </div>
                 <div class="feature-item">
                     <h3>Dramatic Time Saver</h3>
-                    <p>Whole process only takes a few minutes while saving hours of work compared to traditional way.</p>
+                    <p>Plan your semester in minutes rather than spending hours flipping between WISER tabs.</p>
                 </div>
             </div>
         </div>
     </section>
 
-    <main class="shell">
-        <section class="help-section">
-            <div class="section-header">
-                <h2>Help and Preparation Guide</h2>
-                <p>Follow these instructions to acquire your official degree audit and register with your selected class codes in WISER.</p>
+    <main class="shell" style="padding-top: 3rem; padding-bottom: 3.5rem;">
+        <div class="info-card-box">
+            <div class="info-card-text">
+                <h2>Need assistance getting started?</h2>
+                <p>Read our step-by-step guides with video walkthroughs on downloading your official audit from WISER and enrolling with class codes.</p>
             </div>
-
-            <div class="guide-grid">
-                <article class="guide-card">
-                    <div>
-                        <h3>How to get degree audit</h3>
-                        <ol class="instruction-steps">
-                            <li>Log into WISER, you can do it from <a href="https://www.umb.edu/it/software-systems/wiser/" target="_blank" rel="noopener noreferrer">here</a>.</li>
-                            <li>Find and click Boston Degree Audit on the main page.</li>
-                            <li>Click Run Current Program without adding or changing anything.</li>
-                            <li>Wait for the audit to be created. If you see a list of audits, wait for the newest one to be created and click view pdf.</li>
-                            <li>Click Download PDF Audit or the download button in the pdf viewer.</li>
-                        </ol>
-                    </div>
-
-                    <div class="video-wrapper">
-                        <div class="video-label">Video Walkthrough</div>
-                        <div class="video-container">
-                            <iframe width="560" height="315" src="https://www.youtube.com/embed/h1RiR6aHXfc?si=Z7J_hgMVDOayPsrV" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-                        </div>
-                    </div>
-                </article>
-
-                <article class="guide-card">
-                    <div>
-                        <h3>How to use the class code</h3>
-                        <ol class="instruction-steps">
-                            <li>Click on the code number to copy it.</li>
-                            <li>Log into WISER, you can do it from <a href="https://www.umb.edu/it/software-systems/wiser/" target="_blank" rel="noopener noreferrer">here</a>.</li>
-                            <li>On the left side of the main page, click Enrollment, the dropdown.</li>
-                            <li>Select Enrollment: Add Classes.</li>
-                            <li>Select the correct term you have generated the schedule with.</li>
-                            <li>Find Enter Class Number near the middle-left of the screen and enter the code you copied then press enter.</li>
-                        </ol>
-                    </div>
-
-                    <div class="video-wrapper">
-                        <div class="video-label">Video Walkthrough</div>
-                        <div class="video-container">
-                            <iframe width="560" height="315" src="https://www.youtube.com/embed/egOzhtLTn70?si=-QZdF-KkwtWKiAdO" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-                        </div>
-                    </div>
-                </article>
+            <div class="info-card-actions">
+                <a href="{{ url_for('help_page') }}" class="btn-primary" style="width: auto; padding: 0.75rem 1.5rem;">View Help & Guide</a>
+                <a href="{{ url_for('faq_page') }}" class="btn-manual-entry" style="width: auto; padding: 0.75rem 1.5rem;">Browse FAQ</a>
             </div>
-        </section>
+        </div>
     </main>
 
     <footer class="site-footer">
@@ -177,21 +131,37 @@
             <div>
                 <p><b>ClassPick</b> is a UMass Boston Fall 2026 IT capstone project.</p>
                 <p><b>Created by:</b> Jiahong Huang, Hunter Ward, Hasan Algafri, and William Ramos</p>
-                <p><b>Note:</b> This application is a student project and not an official university registration system. Verify all schedule requirements with an academic advisor prior to enrollment.</p>
+                <p><b>Note:</b> Student capstone project; not an official university registration tool. Always verify course plans with an advisor.</p>
             </div>
-            <div class="footer-feedback-link">
+            <div class="footer-actions-cluster">
+                <a href="{{ url_for('help_page') }}" class="footer-btn">Help & Guide</a>
+                <a href="{{ url_for('faq_page') }}" class="footer-btn">FAQ</a>
                 <a href="https://docs.google.com/forms/d/e/1FAIpQLSfuu2U6K53OCovCZsbRZIl9S0wycXzleq4HrR9tvo7auPdtWg/viewform?usp=dialog" target="_blank" rel="noopener noreferrer" class="footer-icon-btn" title="Leave feedback on our Google Form">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                         <polyline points="14 2 14 8 20 8"></polyline>
                         <line x1="16" y1="13" x2="8" y2="13"></line>
                         <line x1="16" y1="17" x2="8" y2="17"></line>
                         <polyline points="10 9 9 9 8 9"></polyline>
                     </svg>
-                    <span>Give Feedback</span>
+                    <span>Take Survey</span>
                 </a>
+                <a href="{{ url_for('feedback_page') }}" class="footer-btn">Feedback</a>
             </div>
         </div>
     </footer>
+
+    <button type="button" id="btnBackToTop" class="btn-back-to-top" aria-label="Scroll back to top" title="Back to top">
+        ▲
+    </button>
+
+    <!-- Asynchronous Render Free Tier Warm-up Ping -->
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            fetch("/healthz", { method: "GET", cache: "no-store" })
+                .then(r => r.json())
+                .catch(() => {});
+        });
+    </script>
 </body>
 </html>
