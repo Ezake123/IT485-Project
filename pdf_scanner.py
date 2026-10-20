@@ -1,5 +1,7 @@
 import pdfplumber
 import re
+from io import BytesIO
+from typing import List, Union
 from models import CourseUnit, RequirementGroup, DegreeAuditResult, KNOWN_GENED_CATEGORIES
 
 #-----------------------------------------------------------------
@@ -14,36 +16,101 @@ from models import CourseUnit, RequirementGroup, DegreeAuditResult, KNOWN_GENED_
 # Developed with assistance from Google Gemini using agentic workflows
 #-----------------------------------------------------------------
 
-#-----------------------------------------------------------------
-# Scans for total earned credits in the audit.
-# Matches patterns like "Earned: 102.00Credits" or "Earned: 102.00 Credits"
-#-----------------------------------------------------------------
+MAX_ALLOWED_PAGES = 20
 
-MAX_ALLOWED_PAGES = 20 # Audits should not be any more pages than this
+def extract_text_from_pdf_stream(pdf_file: Union[BytesIO, bytes]) -> List[str]:
+    """
+    Streams PDF pages one-by-one and flushes pdfminer cache immediately after each page.
+    Prevents Render 512MB Out-Of-Memory container crashes.
+    """
+    lines = []
+    stream = BytesIO(pdf_file) if isinstance(pdf_file, (bytes, bytearray)) else pdf_file
+    with pdfplumber.open(stream) as pdf:
+        num_pages = min(len(pdf.pages), MAX_ALLOWED_PAGES)
+        for i in range(num_pages):
+            page = pdf.pages[i]
+            text = page.extract_text()
+            if text:
+                lines.extend(text.splitlines())
+            # Explicit cache flush to release LTTextBox layout trees immediately
+            if hasattr(page, "flush_cache"):
+                page.flush_cache()
+    return lines
+
+def clean_title_str(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = re.sub(r"\([^)]*\)", "", text)
+    cleaned = re.sub(r"^[\s:\-]+", "", cleaned)
+    cleaned = re.sub(r"[\s:\-]+$", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+def is_table_header_line(line: str) -> bool:
+    clean = line.replace("|", " ").strip()
+    norm = re.sub(r"\s+", " ", clean).lower()
+    if "term course credits grade title" in norm or "title credits grade course term" in norm:
+        return True
+    words = set(re.findall(r"\b[a-z]+\b", norm))
+    return "term" in words and "credits" in words and bool(words.intersection({"course", "grade", "title"}))
+
+def is_needs_line(line: str) -> bool:
+    clean = line.replace("|", " ").strip()
+    return bool(re.match(r"^Needs:", clean, re.IGNORECASE))
+
+def parse_requirement_header(line: str) -> str | None:
+    clean = line.strip()
+    if not clean:
+        return None
+
+    if re.search(r"\b(?:LEGEND|END OF ANALYSIS|SUMMARY OF COURSES|TABLE|COLLEGESOURCE|DEGREE AUDIT PROGRAM)\b", clean, re.IGNORECASE):
+        return None
+    if "=" in clean or clean.startswith("- =") or clean.startswith("NO =") or clean.startswith("OK ="):
+        return None
+    if re.match(r"^\*{4,}$", clean):
+        return None
+
+    if re.search(r"\b\d{2}(?:FL|SP|SU|WR)\b", clean) and re.search(r"\b\d+\.\d{2}\b", clean):
+        return None
+    if re.search(r"\b\d+\.\d{2}\s+(?:[A-D][+-]?|F|P|IP|T[A-D][+-]?|TIP|WAIVE)\b", clean, re.IGNORECASE):
+        return None
+    if re.match(r"^(?:[A-D][+-]?|T[A-D][+-]?|IP|TIP|P|F|\+|-|\+-|OK|NO)$", clean, re.IGNORECASE):
+        return None
+
+    if is_table_header_line(clean) or is_needs_line(clean):
+        return None
+    if re.match(r"^(?:Select from:|Earned:|In-Progress:|GPA\b)", clean, re.IGNORECASE):
+        return None
+
+    m1 = re.match(r"^(?:(?:ip\s*)?[-+*R]\s+)?(?:(\d+|OR))\)\s*(.*)$", clean, re.IGNORECASE)
+    if m1:
+        rest = m1.group(2).strip()
+        return clean_title_str(rest)
+
+    m2 = re.match(r"^(?:(?:ip\s*)?[-*]\s+)(.*)$", clean, re.IGNORECASE)
+    if m2:
+        rest = m2.group(1).strip()
+        rest = re.sub(r"^(?:(?:\d+|OR)\))\s*", "", rest, flags=re.IGNORECASE)
+        return clean_title_str(rest)
+
+    if re.match(r"^(?!Take\b|Select\b|Choose\b)[A-Za-z0-9/ ]+\s+(?:Courses?|Requirements?)$", clean, re.IGNORECASE):
+        if not re.search(r"\b(?:must be|completed|transferred|click on|grade of|check with|passed)\b", clean, re.IGNORECASE):
+            return clean_title_str(clean)
+
+    return None
 
 def earned_credits_scan(audit):
-    # Regex looks for 'Earned:', optional spaces, a decimal or integer number, 
-    # and optional spaces before 'Credits' (case-insensitive)
     credit_re = re.compile(r"Earned:\s*(\d+(?:\.\d+)?)\s*Credits?", re.IGNORECASE)
-
     for line in audit:
         match = credit_re.search(line)
         if match:
             return float(match.group(1))
-
     return 0.0
-
-#-----------------------------------------------------------------
-# Scans for completed/in-progress courses and return the list of them 
-# concatnated with the course name and number without spaces
-#-----------------------------------------------------------------
 
 def complete_course_scan(audit):
     completed_courses = []
-
-    # Matches a term at line start OR WAIVE anywhere, followed by dept and number
     course_re = re.compile(
-        r"(?:^\d{2}\s*(?:FL|SU|SP|WR)|\bWAIVE)\s+([A-Z]{2,8})\s*(\d{1,3}[A-Z]?)\b"
+        r"(?:^\d{2}\s*(?:FL|SU|SP|WR)|\bWAIVE)\s+([A-Z]{2,8})\s*(\d{1,3}[A-Z]*)\b"
     )
 
     for line in audit:
@@ -59,41 +126,31 @@ def complete_course_scan(audit):
 
     return completed_courses
 
-#-----------------------------------------------------------------
-# Figure out the required courses and returns a list of it in the 
-# where each requirement is another list starting with the number 
-# of required courses needed to take following with all the courses 
-# for that requirement
-#-----------------------------------------------------------------
-
 def required_course_scan(all_lines):
     required_courses = []
-    
     needs_re = re.compile(
-        r"Needs:.*?\b(\d+)(Courses|Course|Sets|Set|Sub-Reqs|Sub-Req)\b"
+        r"Needs:.*?\b(\d+)\s*(Courses|Course|Sets|Set|Sub-Reqs|Sub-Req)\b",
+        re.IGNORECASE
     )
 
     current_count = None
     collecting = False
     current_block_lines = []
+    current_req_title = ""
+    accumulating_title = False
+    title_lines = []
+    expecting_needs_count = False
 
     def finalize_block():
-        nonlocal current_count, collecting, current_block_lines
+        nonlocal current_count, collecting, current_block_lines, current_req_title
+        
         if collecting and current_block_lines:
             raw_text = " ".join(current_block_lines)
-            
-            # Clean parenthetical notes like (THROUGH 19SU) and pipes
             cleaned = re.sub(r"\([^)]*\)", "", raw_text)
             cleaned = re.sub(r"\|", " ", cleaned)
-            
-            # Clean out "TERM ?? COURSES:"
             cleaned = re.sub(r"\bTERM\s+[A-Z0-9]{1,2}\s+COURSES\s*:?", " ", cleaned, flags=re.IGNORECASE)
-
-            # Separate numbers glued to dept names (e.g. 301MSIS -> 301 MSIS, NURSNG370 -> NURSNG 370)
-            cleaned = re.sub(r"(\d{1,3}[A-Z]?)(?=[A-Z]{2,8}\b)", r"\1 ", cleaned)
+            cleaned = re.sub(r"(\d{1,3}[A-Z]*)(?=[A-Z]{2,8}\b)", r"\1 ", cleaned)
             cleaned = re.sub(r"([A-Z]{2,8})(?=\d)", r"\1 ", cleaned)
-            
-            # Normalize connectors
             cleaned = re.sub(r"\bAND\b", "&", cleaned)
             cleaned = re.sub(r"[,;:]", " ", cleaned)
             
@@ -106,17 +163,15 @@ def required_course_scan(all_lines):
                 tok = tokens[i].strip()
 
                 if tok.isalpha():
-                    # Handle 'or' conjunction
                     if tok.lower() == "or":
                         i += 1
                         continue
 
                     is_valid_dept = tok.isupper() and (2 <= len(tok) <= 8)
-
                     if is_valid_dept:
                         has_subsequent_number = False
                         for forward_tok in tokens[i + 1 : i + 5]:
-                            if re.match(r"^\d{1,3}[A-Z]?$", forward_tok):
+                            if re.match(r"^\d{1,3}[A-Z]*$", forward_tok):
                                 has_subsequent_number = True
                                 break
                             elif forward_tok.isalpha() and forward_tok.isupper() and (2 <= len(forward_tok) <= 8):
@@ -130,23 +185,18 @@ def required_course_scan(all_lines):
                     if len(courses) > 0 and not is_valid_dept:
                         break
 
-                # Course number match
-                elif current_dept and re.match(r"^\d{1,3}[A-Z]?$", tok):
+                elif current_dept and re.match(r"^\d{1,3}[A-Z]*$", tok):
                     first_course = f"{current_dept}{tok}"
                     
-                    # 1. For course range separated by "TO"
                     if i + 2 < len(tokens) and tokens[i + 1].upper() == "TO":
                         next_tok = tokens[i + 2]
-                        
-                        # Same dept implied: "210L TO 491"
-                        if re.match(r"^\d{1,3}[A-Z]?$", next_tok):
+                        if re.match(r"^\d{1,3}[A-Z]*$", next_tok):
                             range_token = f"{first_course}-{current_dept}{next_tok}"
                             if range_token not in courses:
                                 courses.append(range_token)
                             i += 3
                             continue
-                        
-                        elif i + 3 < len(tokens) and re.match(r"^[A-Z]{2,8}$", next_tok) and re.match(r"^\d{1,3}[A-Z]?$", tokens[i + 3]):
+                        elif i + 3 < len(tokens) and re.match(r"^[A-Z]{2,8}$", next_tok) and re.match(r"^\d{1,3}[A-Z]*$", tokens[i + 3]):
                             pair_dept = next_tok
                             pair_num = tokens[i + 3]
                             range_token = f"{first_course}-{pair_dept}{pair_num}"
@@ -156,19 +206,15 @@ def required_course_scan(all_lines):
                             i += 4
                             continue
 
-                    # 2. Alternative pair separated by "or" 
                     if i + 2 < len(tokens) and tokens[i + 1].lower() == "or":
                         next_tok = tokens[i + 2]
-                        
-                        # Same dept implied: "210 or 212"
-                        if re.match(r"^\d{1,3}[A-Z]?$", next_tok):
+                        if re.match(r"^\d{1,3}[A-Z]*$", next_tok):
                             pair = f"{first_course}|{current_dept}{next_tok}"
                             if pair not in courses:
                                 courses.append(pair)
                             i += 3
                             continue
-                        
-                        elif i + 3 < len(tokens) and re.match(r"^[A-Z]{2,8}$", next_tok) and re.match(r"^\d{1,3}[A-Z]?$", tokens[i + 3]):
+                        elif i + 3 < len(tokens) and re.match(r"^[A-Z]{2,8}$", next_tok) and re.match(r"^\d{1,3}[A-Z]*$", tokens[i + 3]):
                             pair_dept = next_tok
                             pair_num = tokens[i + 3]
                             pair = f"{first_course}|{pair_dept}{pair_num}"
@@ -178,19 +224,15 @@ def required_course_scan(all_lines):
                             i += 4
                             continue
 
-                    # 3. Corequisite pair separated by "&"
                     if i + 2 < len(tokens) and tokens[i + 1] == "&":
                         next_tok = tokens[i + 2]
-                        
-                        # Same dept implied: "252 & 256"
-                        if re.match(r"^\d{1,3}[A-Z]?$", next_tok):
+                        if re.match(r"^\d{1,3}[A-Z]*$", next_tok):
                             pair = f"{first_course}&{current_dept}{next_tok}"
                             if pair not in courses:
                                 courses.append(pair)
                             i += 3
                             continue
-                            
-                        elif i + 3 < len(tokens) and re.match(r"^[A-Z]{2,8}$", next_tok) and re.match(r"^\d{1,3}[A-Z]?$", tokens[i + 3]):
+                        elif i + 3 < len(tokens) and re.match(r"^[A-Z]{2,8}$", next_tok) and re.match(r"^\d{1,3}[A-Z]*$", tokens[i + 3]):
                             pair_dept = next_tok
                             pair_num = tokens[i + 3]
                             pair = f"{first_course}&{pair_dept}{pair_num}"
@@ -200,18 +242,19 @@ def required_course_scan(all_lines):
                             i += 4
                             continue
 
-                    # Standalone course
                     if first_course not in courses:
                         courses.append(first_course)
 
                 i += 1
 
             if courses:
-                if current_count is not None:
-                    required_courses.append([current_count] + courses)
-                    current_count = None
-                else:
-                    required_courses.append(courses)
+                required_courses.append({
+                    "needed": current_count,
+                    "courses": courses,
+                    "title": current_req_title
+                })
+                current_count = None
+                current_req_title = ""
 
         collecting = False
         current_block_lines = []
@@ -221,11 +264,51 @@ def required_course_scan(all_lines):
         if not clean_line:
             continue
 
+        if accumulating_title:
+            is_stop = False
+            if is_table_header_line(clean_line):
+                is_stop = True
+            elif is_needs_line(clean_line) or needs_re.search(clean_line) or re.match(r"^\d+\s*(?:Courses?|Course|Sub-Reqs?|Sets?)$", clean_line, re.IGNORECASE):
+                is_stop = True
+            elif re.match(r"^(?:(?:ip\s*)?[-+*R]\s+)?(?:(?:\d+|OR)\))", clean_line, re.IGNORECASE) or clean_line.startswith("- "):
+                is_stop = True
+            elif "Select from:" in clean_line:
+                is_stop = True
+            elif (re.search(r"\b\d{2}(?:FL|SP|SU|WR)\b", clean_line) and re.search(r"\b\d+\.\d{2}\b", clean_line)) or re.match(r"^\*{4,}$", clean_line):
+                is_stop = True
+
+            if is_stop:
+                accumulating_title = False
+                current_req_title = clean_title_str(" ".join(title_lines))
+                title_lines = []
+            else:
+                title_lines.append(clean_line)
+                continue
+
+        header_title = parse_requirement_header(clean_line)
+        if header_title is not None:
+            finalize_block()
+            accumulating_title = True
+            title_lines = [header_title] if header_title else []
+            continue
+
         needs_match = needs_re.search(clean_line)
         if needs_match:
             finalize_block()
             current_count = int(needs_match.group(1))
+            expecting_needs_count = False
             continue
+        elif is_needs_line(clean_line):
+            expecting_needs_count = True
+            continue
+
+        if expecting_needs_count:
+            count_match = re.search(r"^\b(\d+)\s*(Courses|Course|Sets|Set|Sub-Reqs|Sub-Req)\b", clean_line, re.IGNORECASE)
+            if count_match:
+                finalize_block()
+                current_count = int(count_match.group(1))
+                expecting_needs_count = False
+                continue
 
         if "Select from:" in clean_line:
             finalize_block()
@@ -241,36 +324,16 @@ def required_course_scan(all_lines):
     finalize_block()
     return required_courses
 
-#-----------------------------------------------------------------
-# For making the special case of unaccounted required courses
-# usually caused by multiple select from without saying the required
-# amount of courses before it
-#-----------------------------------------------------------------
-
 def normalize_uncounted_requirements(required_courses):
-
     normalized = []
-    
     for item in required_courses:
-        # Create a shallow copy to prevent in-place side effects
-        entry = list(item)
-        
-        # Check if the current entry lacks an integer count at index 0
-        if not (entry and isinstance(entry[0], int)):
-            # The list immediately preceding this one gets reduced to 1
-            if normalized and isinstance(normalized[-1][0], int):
-                normalized[-1][0] = 1
-                
-            # The current list also gets an explicit count of 1
-            entry = [1] + entry
-            
+        entry = dict(item)
+        if entry.get("needed") is None:
+            if normalized and normalized[-1].get("needed") is None:
+                normalized[-1]["needed"] = 1
+            entry["needed"] = 1
         normalized.append(entry)
-        
     return normalized
-
-# -----------------------------------------------------------------
-# Scans specifically for General Education distribution requirements
-# -----------------------------------------------------------------
 
 GENED_SECTION_HEADERS = [
     r"GENERAL\s+EDUCATION\s+DISTRIBUTION",
@@ -286,10 +349,7 @@ def gen_ed_scan(all_lines: list) -> list[RequirementGroup]:
 
     needs_re = re.compile(r"Needs:\s*(\d+)\s*(?:Courses?|Course|Sub-Reqs?|Sets?)", re.IGNORECASE)
     header_re = re.compile(r"|".join(GENED_SECTION_HEADERS), re.IGNORECASE)
-
-    # Definite exit marker: Only exit when reaching the Major block or End of Audit
     exit_re = re.compile(r"(^[A-Z\s]+MAJOR\s*\*{4,}|SUMMARY OF COURSES TAKEN|LEGEND\b)", re.IGNORECASE)
-    # Stop marker for 8 or more asterisks
     divider_re = re.compile(r"\*{8,}")
 
     for raw_line in all_lines:
@@ -297,38 +357,30 @@ def gen_ed_scan(all_lines: list) -> list[RequirementGroup]:
         if not line:
             continue
 
-        # Check for 8+ asterisks divider exit after World Cultures/Languages
         if in_gen_ed_section and past_world_cultures and divider_re.search(line):
             break
 
-        # Strip audit status prefixes like "+", "NO", "OK", "-", "|"
         clean = re.sub(r"^(?:NO|\+|OK|\-|\*|\|)\s*", "", line).strip()
         if not clean:
             continue
 
-        # 1. Detect section start
         if not in_gen_ed_section:
             if header_re.search(clean):
                 in_gen_ed_section = True
             continue
 
-        # 2. Section exit check
         if exit_re.search(clean):
             break
 
-        # 3. Match Gen Ed Category (Flexible search on stripped line)
         matched_cat = False
         for display_name, token_suffix in KNOWN_GENED_CATEGORIES:
-            # Check if category name is present in this line
             pattern = r"\b" + re.escape(display_name) + r"\b"
             if re.search(pattern, clean, re.IGNORECASE):
-                # Avoid matching the introductory legend list ('AR' ARTS, 'HU' HUMANITIES...)
                 if "'" not in clean and "COURSES DESIGNATED" not in clean.upper():
                     current_category_name = display_name
                     current_category_token = f"GENED:{token_suffix}"
                     matched_cat = True
 
-                    # Flag that we have entered/passed the World Cultures/Languages requirement
                     if "WORLD" in token_suffix:
                         past_world_cultures = True
                     break
@@ -336,12 +388,10 @@ def gen_ed_scan(all_lines: list) -> list[RequirementGroup]:
         if matched_cat:
             continue
 
-        # 4. Detect "Needs: X Course" under the current category
         needs_match = needs_re.search(clean)
         if needs_match and current_category_token:
             needed_count = int(needs_match.group(1))
 
-            # Guard against duplicate additions if already recorded
             if not any(g.units[0].raw_token == current_category_token for g in gen_ed_groups):
                 gen_ed_groups.append(
                     RequirementGroup(
@@ -351,15 +401,10 @@ def gen_ed_scan(all_lines: list) -> list[RequirementGroup]:
                     )
                 )
 
-            # Reset state for next category
             current_category_token = None
             current_category_name = None
 
     return gen_ed_groups
-
-#-----------------------------------------------------------------
-# Builds results based on the models
-#-----------------------------------------------------------------
 
 def build_audit_result(all_lines: list) -> DegreeAuditResult:
     completed = set(complete_course_scan(all_lines))
@@ -367,14 +412,11 @@ def build_audit_result(all_lines: list) -> DegreeAuditResult:
     raw_blocks = normalize_uncounted_requirements(required_course_scan(all_lines))
 
     requirement_groups: list[RequirementGroup] = []
-
-    # 1. Standard Major / Program Requirements
-    for idx, block in enumerate(raw_blocks, start=1):
-        if not block:
-            continue
-        has_count = isinstance(block[0], int)
-        needed = block[0] if has_count else 1
-        raw_candidates = block[1:] if has_count else block
+    req_idx = 1
+    for block in raw_blocks:
+        needed = block.get("needed", 1)
+        raw_candidates = block.get("courses", [])
+        title = block.get("title", "").strip()
 
         active_units = []
         for token in raw_candidates:
@@ -383,15 +425,16 @@ def build_audit_result(all_lines: list) -> DegreeAuditResult:
                 active_units.append(unit)
 
         if active_units:
+            group_name = f"Requirement {req_idx} - {title}" if title else f"Requirement {req_idx}"
             requirement_groups.append(
                 RequirementGroup(
-                    group_name=f"Requirement {idx}",
+                    group_name=group_name,
                     courses_needed=min(needed, len(active_units)),
                     units=active_units
                 )
             )
+            req_idx += 1
 
-    # 2. Scanned Gen Ed Distribution Requirements
     gened_groups = gen_ed_scan(all_lines)
 
     return DegreeAuditResult(

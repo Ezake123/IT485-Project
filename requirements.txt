@@ -1,6 +1,6 @@
-flask
+Flask
 gunicorn
 supabase
 pdfplumber
-python-dotenv
 flask-compress
+python-dotenv
