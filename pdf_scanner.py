@@ -145,6 +145,14 @@ def required_course_scan(all_lines):
         nonlocal current_count, collecting, current_block_lines, current_req_title
         
         if collecting and current_block_lines:
+            # Ignore Gen Ed language alternatives already tracked in Gen Ed distribution
+            if current_req_title and re.search(r"intensive\s+language", current_req_title, re.IGNORECASE):
+                collecting = False
+                current_block_lines = []
+                current_count = None
+                current_req_title = ""
+                return
+
             raw_text = " ".join(current_block_lines)
             cleaned = re.sub(r"\([^)]*\)", "", raw_text)
             cleaned = re.sub(r"\|", " ", cleaned)
@@ -417,6 +425,10 @@ def build_audit_result(all_lines: list) -> DegreeAuditResult:
         needed = block.get("needed", 1)
         raw_candidates = block.get("courses", [])
         title = block.get("title", "").strip()
+
+        # Skip Intensive Language sub-requirements already handled under Gen Ed
+        if re.search(r"intensive\s+language", title, re.IGNORECASE):
+            continue
 
         active_units = []
         for token in raw_candidates:
