@@ -53,12 +53,12 @@
 
             <!-- Feedback Submission Form -->
             <form id="feedbackForm" 
-                  action="https://docs.google.com/forms/d/e/1FAIpQLSe1eW1PJoUZ9_48FrcNIAaFd4qKYUadigqml_JsK-UCBapl8A/formResponse" 
+                  action="https://docs.google.com/forms/d/e/1FAIpQLSfuu2U6K53OCovCZsbRZIl9S0wycXzleq4HrR9tvo7auPdtWg/formResponse" 
                   method="POST" 
                   target="hidden_google_iframe"
                   onsubmit="onFeedbackSubmitStart()">
 
-                <!-- Question 1: 5-Star Rating -->
+                <!-- 5-Star Rating -->
                 <div class="feedback-form-group">
                     <label class="form-label" for="starRating">Overall Experience Rating <span class="required-asterisk">*</span></label>
                     <div class="star-rating" id="starRating">
@@ -76,17 +76,76 @@
                     <span class="rating-hint-text">Click a star to rate from 1 to 5.</span>
                 </div>
 
-                <!-- Question 2: Academic Program / Standing -->
+                <!-- Multiple Choice Question 1: Helpfulness in Creating Schedule -->
                 <div class="feedback-form-group">
-                    <label class="form-label" for="studentMajor">What is your major or college at UMass Boston? (Optional)</label>
-                    <input type="text" 
-                           id="studentMajor" 
-                           name="entry.1506179990" 
-                           class="slider-text-box input-w-full text-left" 
-                           placeholder="IT, CS, etc...">
+                    <label class="form-label">In general, how much have our website helped in creating your schedule?</label>
+                    <div class="feedback-radio-group">
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.615324448" value="Tremendous">
+                            <span>Tremendous</span>
+                        </label>
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.615324448" value="Useful">
+                            <span>Useful</span>
+                        </label>
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.615324448" value="Not that much">
+                            <span>Not that much</span>
+                        </label>
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.615324448" value="Not at all">
+                            <span>Not at all</span>
+                        </label>
+                    </div>
                 </div>
 
-                <!-- Question 3: Feature Wishlist -->
+                <!-- Multiple Choice Question 2: Time Spent -->
+                <div class="feedback-form-group">
+                    <label class="form-label">How much time did you need to spend to get your desired schedule with our website?</label>
+                    <div class="feedback-radio-group">
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.1583368806" value="Less than 10 minutes">
+                            <span>Less than 10 minutes</span>
+                        </label>
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.1583368806" value="10 - 19 minutes">
+                            <span>10 - 19 minutes</span>
+                        </label>
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.1583368806" value="20 - 29 minutes">
+                            <span>20 - 29 minutes</span>
+                        </label>
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.1583368806" value="30 - 59 minutes">
+                            <span>30 - 59 minutes</span>
+                        </label>
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.1583368806" value="1 hour +">
+                            <span>1 hour +</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Multiple Choice Question 3: Confidence -->
+                <div class="feedback-form-group">
+                    <label class="form-label">Did you feel more confident with course selecting after using our website?</label>
+                    <div class="feedback-radio-group">
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.1455824872" value="Yes">
+                            <span>Yes</span>
+                        </label>
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.1455824872" value="No">
+                            <span>No</span>
+                        </label>
+                        <label class="feedback-radio-option">
+                            <input type="radio" name="entry.1455824872" value="Maybe">
+                            <span>Maybe</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Feature Wishlist -->
                 <div class="feedback-form-group">
                     <label class="form-label" for="featureRequest">What feature would you like to see added/changed?</label>
                     <input type="text" 
@@ -96,15 +155,15 @@
                            placeholder="Please let us know, we would love to change or add features...">
                 </div>
 
-                <!-- Question 4: Open Feedback -->
+                <!-- Open Feedback -->
                 <div class="feedback-form-group">
-                    <label class="form-label" for="openComments">Any comments, questions, or problems encountered? <span class="required-asterisk">*</span></label>
+                    <label class="form-label" for="openComments">Any comments, questions, or problems encountered?</label>
                     <textarea id="openComments" 
                               name="entry.1472755968" 
                               rows="4" 
                               class="feedback-textarea" 
                               placeholder="Let us know know how you think about our website and address anything here..." 
-                              required></textarea>
+                              ></textarea>
                 </div>
 
                 <button type="submit" id="btnSubmitFeedback" class="btn-primary">

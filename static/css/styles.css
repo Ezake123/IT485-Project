@@ -206,6 +206,16 @@ body {
 .nav-links {
     display: flex;
     gap: 0.75rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+    max-width: 100%;
+}
+
+.nav-links::-webkit-scrollbar {
+    display: none; /* Chrome, Safari */
 }
 
 .nav-link {
@@ -216,6 +226,8 @@ body {
     padding: 0.5rem 0.875rem;
     border-bottom: 0.1875rem solid transparent;
     transition: color 0.15s ease, border-color 0.15s ease;
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .nav-link:hover {
@@ -359,6 +371,41 @@ body {
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
+}
+
+/* Multiple-Choice Feedback Question Choices */
+.feedback-radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.feedback-radio-option {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    font-size: 0.875rem;
+    color: #334155;
+    background: #f8fafc;
+    border: 0.0625rem solid var(--border-color);
+    border-radius: 0.375rem;
+    padding: 0.6rem 0.875rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.feedback-radio-option:hover {
+    background-color: #f1f5f9;
+    border-color: #cbd5e1;
+}
+
+.feedback-radio-option input[type="radio"] {
+    accent-color: var(--umb-blue);
+    width: 1.05rem;
+    height: 1.05rem;
+    cursor: pointer;
+    margin: 0;
 }
 
 .btn-feedback-cta {
@@ -2890,17 +2937,12 @@ body.page-feedback {
     .candidate-header-row .search-box-wrapper { width: 100%; max-width: 100%; min-width: 0; }
     .audit-actions-bottom-right { justify-content: stretch; }
     .btn-jump-generator { width: 100%; text-align: center; }
-    .feedback-banner-actions {
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-    }
-    .feedback-banner-actions a {
-        width: 100%;
-        text-align: center;
-    }
+    .feedback-banner-actions { width: 100%; display: flex; flex-direction: column; gap: 0.5rem; }
+    .feedback-banner-actions a { width: 100%; text-align: center;}
     .course-action-buttons { width: 100%; max-width: 100%; min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 0.375rem }
+    .header-nav-row {  flex-direction: column; align-items: stretch; gap: 0.75rem; }
+    .header-brand { width: 100%; }
+    .nav-links { width: 100%; padding-bottom: 0.25rem; }
 }
 
 @media (max-width: 30rem) { /* 480px */
