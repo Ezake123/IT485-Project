@@ -44,20 +44,23 @@ function getCourseCacheKey(dept, num, term = null) {
 function seedCourseCache(courseObj, term = null) {
     if (!courseObj || !courseObj.sections) return;
     const key = getCourseCacheKey(courseObj.subject_code || courseObj.course_name, courseObj.course_number, term);
-    if (!courseDetailsCache.has(key)) {
+    const resolvedPrereqs = courseObj.prerequisites || courseObj.raw_prerequisites || courseObj.prereqs || "None";
+    const existing = courseDetailsCache.get(key);
+
+    if (!existing || (existing.prerequisites === "None" && resolvedPrereqs !== "None")) {
         courseDetailsCache.set(key, {
             course_name: courseObj.subject_code || courseObj.course_name,
             course_number: courseObj.course_number,
             course_title: courseObj.course_title || courseObj.name,
-            description: courseObj.description || "No description available.",
-            gen_ed: courseObj.gen_ed || "None",
-            prerequisites: courseObj.prereqs || courseObj.raw_prerequisites || "None",
-            prereq_eval: courseObj.prereq_eval || {
+            description: courseObj.description || (existing ? existing.description : "No description available."),
+            gen_ed: courseObj.gen_ed || (existing ? existing.gen_ed : "None"),
+            prerequisites: resolvedPrereqs,
+            prereq_eval: courseObj.prereq_eval || (existing ? existing.prereq_eval : {
                 status: courseObj.prereq_status || "met",
                 missing: courseObj.missing_prereqs || [],
                 message: courseObj.prereq_warning || ""
-            },
-            sections: courseObj.sections || []
+            }),
+            sections: courseObj.sections || (existing ? existing.sections : [])
         });
     }
 }
@@ -300,8 +303,8 @@ function renderLockedCard(course, section) {
     const isCustom = String(section.class_code).startsWith("CUST-") || Boolean(course.is_custom);
     const displayTitle = course.course_title || course.name || `${course.subject_code} ${course.course_number}`;
     const safeTitle = escapeHtml(displayTitle);
+    const creditsVal = course.credits || section.credits || 3;
 
-    // FIX: Restored space between subject_code and course_number
     card.innerHTML = `
         <div class="card-header-flex">
             <div class="candidate-code">${course.subject_code} ${course.course_number} <span class="locked-badge-pill">Sec ${section.section}</span></div>
@@ -316,7 +319,7 @@ function renderLockedCard(course, section) {
         <div class="candidate-name" title="${safeTitle}">${safeTitle}</div>
         <div class="candidate-meta meta-top-spacing">
             <span>${daysStr} (${timeStr})</span>
-            <span>#${section.class_code}</span>
+            <span>${creditsVal} cr</span>
         </div>
     `;
 
@@ -1349,6 +1352,16 @@ function openCourseModal(dept, num, targetSection = null, preloadedTitle = null)
     document.getElementById("modalSectionTabs").innerHTML = "";
     document.getElementById("modalSectionContent").innerHTML = '<div class="empty-placeholder">Loading details...</div>';
 
+    const initialPrereqEl = document.getElementById("modalCoursePrereq");
+    if (initialPrereqEl) {
+        initialPrereqEl.className = "meta-pill";
+        initialPrereqEl.textContent = "Prereqs: Loading...";
+    }
+    const initialStatusEl = document.getElementById("modalCoursePrereqStatus");
+    if (initialStatusEl) {
+        initialStatusEl.style.display = "none";
+    }
+
     const term = getActiveTerm();
     const cacheKey = getCourseCacheKey(dept, num, term);
 
@@ -1375,16 +1388,48 @@ function openCourseModal(dept, num, targetSection = null, preloadedTitle = null)
         document.getElementById("modalCourseGenEd").textContent = `Gen Ed: ${data.gen_ed}`;
 
         const prereqEl = document.getElementById("modalCoursePrereq");
+        let statusEl = document.getElementById("modalCoursePrereqStatus");
+
+        // Ensure status element exists immediately after the raw prerequisite pill
+        if (!statusEl && prereqEl && prereqEl.parentNode) {
+            statusEl = document.createElement("span");
+            statusEl.id = "modalCoursePrereqStatus";
+            statusEl.className = "meta-pill";
+            prereqEl.parentNode.insertBefore(statusEl, prereqEl.nextSibling);
+        }
+
+        const rawPrereqText = String(data.prerequisites || "None").trim();
+        const hasPrereqs = rawPrereqText !== "None" && rawPrereqText.length > 0;
+
+        // 1. Raw prerequisite block
         if (prereqEl) {
-            if (data.prereq_eval && data.prereq_eval.missing && data.prereq_eval.missing.length > 0) {
-                prereqEl.className = "meta-pill pill-prereq-missing";
-                prereqEl.innerHTML = `⚠️ <strong>Prereqs:</strong> ${escapeHtml(data.prerequisites)} <span class="missing-highlight">(Missing: Needs ${escapeHtml(data.prereq_eval.missing.join(", "))})</span>`;
-            } else if (data.prerequisites && data.prerequisites !== "None") {
-                prereqEl.className = "meta-pill pill-prereq-met";
-                prereqEl.innerHTML = `✓ <strong>Prereqs Met:</strong> ${escapeHtml(data.prerequisites)}`;
+            prereqEl.className = "meta-pill";
+            if (hasPrereqs) {
+                prereqEl.innerHTML = `<strong>Prereqs:</strong> ${escapeHtml(rawPrereqText)}`;
+                prereqEl.setAttribute("title", rawPrereqText);
             } else {
-                prereqEl.className = "meta-pill";
                 prereqEl.textContent = "Prereqs: None";
+                prereqEl.removeAttribute("title");
+            }
+        }
+
+        // 2. Secondary block for missing breakdown or verification status
+        if (statusEl) {
+            const hasMissing = data.prereq_eval && Array.isArray(data.prereq_eval.missing) && data.prereq_eval.missing.length > 0;
+
+            if (hasMissing) {
+                const missingText = data.prereq_eval.missing.join(", ");
+                statusEl.className = "meta-pill pill-prereq-missing";
+                statusEl.style.display = "inline-flex";
+                statusEl.innerHTML = `⚠️ <strong>Missing:</strong> <span class="missing-highlight">Needs ${escapeHtml(missingText)}</span>`;
+                statusEl.setAttribute("title", `Missing requirement: Needs ${missingText}`);
+            } else if (hasPrereqs && (!data.prereq_eval || data.prereq_eval.status === "met")) {
+                statusEl.className = "meta-pill pill-prereq-met";
+                statusEl.style.display = "inline-flex";
+                statusEl.innerHTML = `✓ <strong>Prereqs Met</strong>`;
+                statusEl.setAttribute("title", "All prerequisites for this course are met");
+            } else {
+                statusEl.style.display = "none";
             }
         }
 
@@ -1530,6 +1575,7 @@ function renderActiveSectionTab(index) {
     `;
 
     const lockBtn = document.getElementById("btnModalLockSection");
+    const unlockBtn = document.getElementById("btnModalUnlockSection");
     if (!lockBtn) return;
 
     const targetDept = String(activeModalCourse.subject_code || "").trim().toUpperCase();
@@ -1545,6 +1591,8 @@ function renderActiveSectionTab(index) {
     });
 
     if (lockedItem) {
+        if (unlockBtn) unlockBtn.style.display = "inline-flex";
+
         if (String(lockedItem.section.class_code) === String(s.class_code)) {
             lockBtn.textContent = "🔒 Current Active Section";
             lockBtn.disabled = true;
@@ -1555,6 +1603,7 @@ function renderActiveSectionTab(index) {
             lockBtn.className = "btn-primary btn-modal-lock";
         }
     } else {
+        if (unlockBtn) unlockBtn.style.display = "none";
         lockBtn.textContent = "🔒 Lock This Section";
         lockBtn.disabled = false;
         lockBtn.className = "btn-primary btn-modal-lock";
@@ -1604,6 +1653,71 @@ function lockSectionFromModal() {
     closeCourseModal();
     updateCatalogSearchButtons();
 }
+
+function unlockSectionFromModal() {
+    if (!activeModalCourse || !currentModalSections[activeModalSectionIndex]) return;
+
+    const targetDept = String(activeModalCourse.subject_code || "").trim().toUpperCase();
+    const targetNum = String(activeModalCourse.course_number || "").trim().toUpperCase();
+    const s = currentModalSections[activeModalSectionIndex];
+    const isDisc = String(s.section).trim().toUpperCase().endsWith("D");
+
+    const lockedItem = lockedSections.find(ls => {
+        if (!ls.course || !ls.section) return false;
+        const curDept = String(ls.course.subject_code || "").trim().toUpperCase();
+        const curNum = String(ls.course.course_number || "").trim().toUpperCase();
+        const curIsDisc = String(ls.section.section).trim().toUpperCase().endsWith("D");
+        return curDept === targetDept && curNum === targetNum && curIsDisc === isDisc;
+    });
+
+    if (lockedItem) {
+        unlockSection(lockedItem.section.class_code, lockedItem.section.term || getActiveTerm());
+        renderActiveSectionTab(activeModalSectionIndex);
+    }
+}
+
+function deleteCourseFromModal() {
+    if (!activeModalCourse) return;
+
+    const targetDept = String(activeModalCourse.subject_code || "").trim().toUpperCase();
+    const targetNum = String(activeModalCourse.course_number || "").trim().toUpperCase();
+
+    // 1. Remove from locked sections if locked
+    const lockedMatches = lockedSections.filter(ls => {
+        if (!ls.course) return false;
+        return String(ls.course.subject_code || "").trim().toUpperCase() === targetDept &&
+               String(ls.course.course_number || "").trim().toUpperCase() === targetNum;
+    });
+    lockedMatches.forEach(ls => {
+        deleteLockedSectionCompletely(ls.section.class_code, ls.section.term || getActiveTerm());
+    });
+
+    // 2. Remove from candidate pool if present
+    removeCourseFromPool(targetDept, targetNum);
+
+    // 3. Remove scheduled course card from view if present
+    const scheduledCards = document.querySelectorAll(".course-card-unified");
+    scheduledCards.forEach(card => {
+        const codeHighlight = card.querySelector(".course-code-highlight")?.textContent || "";
+        if (codeHighlight.toUpperCase().includes(targetDept) && codeHighlight.toUpperCase().includes(targetNum)) {
+            card.remove();
+        }
+    });
+
+    // 4. Remove timetable block if present
+    const timeBlocks = document.querySelectorAll(".event-block");
+    timeBlocks.forEach(blk => {
+        const titleText = (blk.querySelector(".event-title")?.textContent || "").toUpperCase();
+        if (titleText.includes(targetDept) && titleText.includes(targetNum)) {
+            blk.remove();
+        }
+    });
+
+    closeCourseModal();
+}
+
+window.unlockSectionFromModal = unlockSectionFromModal;
+window.deleteCourseFromModal = deleteCourseFromModal;
 
 function closeCourseModal(e) {
     if (e && e.target) {

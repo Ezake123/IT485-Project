@@ -441,7 +441,7 @@ def build_audit_result(all_lines: list) -> DegreeAuditResult:
             requirement_groups.append(
                 RequirementGroup(
                     group_name=group_name,
-                    courses_needed=min(needed, len(active_units)),
+                    courses_needed=needed,
                     units=active_units
                 )
             )

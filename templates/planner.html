@@ -336,7 +336,7 @@
                                 <div class="candidate-name" title="{{ display_title }}">{{ display_title }}</div>
                                 <div class="candidate-meta meta-top-spacing">
                                     <span>{{ item.section.days|join(', ') if item.section.days else 'Online' }} ({{ item.section.start_time }} - {{ item.section.end_time }})</span>
-                                    <span>#{{ item.section.class_code }}</span>
+                                    <span>{{ item.course.credits if item.course.credits else (item.section.credits if item.section.credits else 3) }} cr</span>
                                 </div>
                             </div>
                         {% endfor %}
@@ -683,6 +683,7 @@
                 <div class="modal-tags-row">
                     <span class="meta-pill" id="modalCourseGenEd">Gen Ed: None</span>
                     <span class="meta-pill" id="modalCoursePrereq">Prereqs: None</span>
+                    <span class="meta-pill" id="modalCoursePrereqStatus" style="display: none;"></span>
                 </div>
 
                 <hr class="modal-divider">
@@ -695,6 +696,14 @@
                 <button type="button" id="btnModalLockSection" class="btn-primary btn-modal-lock" onclick="lockSectionFromModal()">
                     Lock This Section
                 </button>
+                <div class="modal-secondary-actions" id="modalSecondaryActions">
+                    <button type="button" id="btnModalUnlockSection" class="btn-action-unlock btn-modal-action" onclick="unlockSectionFromModal()" style="display: none;">
+                        Remove from Lock-in
+                    </button>
+                    <button type="button" id="btnModalDeleteCourse" class="btn-action-delete btn-modal-action" onclick="deleteCourseFromModal()">
+                        Delete Course
+                    </button>
+                </div>
             </div>
         </div>
     </div>

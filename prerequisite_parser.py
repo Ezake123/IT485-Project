@@ -111,7 +111,8 @@ class GeneralizedPrerequisiteCompiler:
         re.IGNORECASE,
     )
 
-    COURSE_RE = re.compile(r"\b([A-Za-z]{2,6})(?:\s+|-)(\d{1,4}[A-Za-z]?)\b")
+    # Strictly matches 3-digit course numbers with optional academic suffixes (e.g., 110, 114L, 200G)
+    COURSE_RE = re.compile(r"\b([A-Za-z]{2,6})(?:\s+|-)(\d{3}[A-Za-z]?)\b")
 
     def expand_contractions(self, text: str) -> str:
         out = text
@@ -129,7 +130,7 @@ class GeneralizedPrerequisiteCompiler:
             r"students\s+who\s+(?:have|had|do|did)\s+not\s+(?:taken|completed|passed|have)\s+"
             r"([^;]+?)\s+(?:may|can|will|would|should)\s+not\s+"
             r"(?:enroll(?:[\s]+in)?|take|register(?:[\s]+for)?|receive\s+credit(?:[\s]+for)?)"
-            r"(?:[\s]+[A-Za-z]{2,6}[\s]+\d{1,4}[A-Za-z]?)?\.?",
+            r"(?:[\s]+[A-Za-z]{2,6}[\s]+\d{3}[A-Za-z]?)?\.?",
             re.IGNORECASE,
         )
         for m in double_neg_re.finditer(cleaned):
@@ -144,7 +145,7 @@ class GeneralizedPrerequisiteCompiler:
             r"students\s+(?:who|that)\s+(?:have\s+taken|took|complete|completed|have\s+credit\s+for)\s+"
             r"([^.:;]+?)\s+(?:may\s+not|can\s+not|will\s+not|would\s+not|are\s+not\s+eligible\s+to)\s+"
             r"(?:enroll(?:[\s]+in)?|take|register(?:[\s]+for)?|receive\s+credit(?:[\s]+for)?)"
-            r"(?:[\s]+[A-Za-z]{2,6}[\s]+\d{1,4}[A-Za-z]?)?\.?",
+            r"(?:[\s]+[A-Za-z]{2,6}[\s]+\d{3}[A-Za-z]?)?\.?",
             re.IGNORECASE,
         )
         for m in anti_req_re.finditer(cleaned):
@@ -157,7 +158,7 @@ class GeneralizedPrerequisiteCompiler:
         # 3. Repeat category exclusion: "may not take more than one 200G course"
         repeat_re = re.compile(
             r"students\s+(?:may|can|will|would|should)\s+not\s+take\s+more\s+than\s+one\s+"
-            r"(\d{3,4}[A-Za-z]?)\s*(?:\([^)]*\))?\s*course\.?",
+            r"(\d{3}[A-Za-z]?)\s*(?:\([^)]*\))?\s*course\.?",
             re.IGNORECASE,
         )
         for m in repeat_re.finditer(cleaned):
@@ -168,7 +169,7 @@ class GeneralizedPrerequisiteCompiler:
         # 4. Credit exclusion: "not open to students who have taken X"
         not_open_re = re.compile(
             r"(?:not\s+open\s+to\s+students\s+who\s+have\s+taken|no\s+credit\s+if\s+taken)\s+"
-            r"([A-Za-z]{2,6}\s+\d{1,4}[A-Za-z]?(?:\s*(?:or|and|/)\s*(?:[A-Za-z]{2,6}\s+)?\d{1,4}[A-Za-z]?)*)\.?",
+            r"([A-Za-z]{2,6}\s+\d{3}[A-Za-z]?(?:\s*(?:or|and|/)\s*(?:[A-Za-z]{2,6}\s+)?\d{3}[A-Za-z]?)*)\.?",
             re.IGNORECASE,
         )
         for m in not_open_re.finditer(cleaned):
@@ -189,7 +190,7 @@ class GeneralizedPrerequisiteCompiler:
 
         # Placement waivers & tests
         s = re.sub(
-            r"(?:,\s*|\s+or\s+|\s+and\s+)?placement\s+into\s+[A-Za-z]{2,6}\s+\d{1,4}[A-Za-z]?\s+"
+            r"(?:,\s*|\s+or\s+|\s+and\s+)?placement\s+into\s+[A-Za-z]{2,6}\s+\d{3}[A-Za-z]?\s+"
             r"(?:on|from)\s+the\s+math\s+placement\s+(?:test|exam)",
             " ",
             s,
@@ -209,9 +210,13 @@ class GeneralizedPrerequisiteCompiler:
         s = re.sub(r"\b[A-Za-z]{2,6}\s+students\s+only\.?", " ", s, flags=re.IGNORECASE)
         s = re.sub(r"\b[A-Z]{3,8}-(?:MA|MS|PHD|BA|BS|CERT|MEd)\b", " ", s, flags=re.IGNORECASE)
 
-        # Credit minimums (handled via min_credits)
-        s = re.sub(r"\ba\s+minimum\s+of\s+\d+\s+credits\b", " ", s, flags=re.IGNORECASE)
-        s = re.sub(r"\b\d+\s+or\s+more\s+credits\b", " ", s, flags=re.IGNORECASE)
+        # Credit minimums (e.g., "and 60 credits", "a minimum of 60 credits", "60 or more credits")
+        s = re.sub(
+            r"(?:,\s*|\s+and\s+)?\b(?:at\s+least\s+|a\s+minimum\s+of\s+)?\d+\s*(?:or\s+more\s+)?(?:earned\s+)?credits?\b",
+            " ",
+            s,
+            flags=re.IGNORECASE,
+        )
 
         # Header prefixes
         s = re.sub(r"^\s*(?:Pre-?requisites?|Pre-?req|Requisites?)\s*(?::|=)\s*", " ", s, flags=re.IGNORECASE)
@@ -253,19 +258,19 @@ class GeneralizedPrerequisiteCompiler:
         s = text
         # Slash course disjunctions: BIOL 252/254 -> (BIOL 252 or BIOL 254)
         s = re.sub(
-            r"\b([A-Za-z]{2,6})\s*(\d{1,4}[A-Za-z]?)/(\d{1,4}[A-Za-z]?)\b",
+            r"\b([A-Za-z]{2,6})\s*(\d{3}[A-Za-z]?)/(\d{3}[A-Za-z]?)\b",
             r"(\1 \2 or \1 \3)",
             s,
         )
         s = re.sub(
-            r"\b(\d{1,4}[A-Za-z]?)/(\d{1,4}[A-Za-z]?)\b",
+            r"\b(\d{3}[A-Za-z]?)/(\d{3}[A-Za-z]?)\b",
             r"(\1 or \2)",
             s,
         )
 
         # "with" between course pairs: CHEM 252 with 256 -> (CHEM 252 AND_TIGHT 256)
         s = re.sub(
-            r"\b([A-Za-z]{2,6}\s+\d{1,4}[A-Za-z]?)\s+with\s+(\d{1,4}[A-Za-z]?(?:\s+or\s+\d{1,4}[A-Za-z]?)*)",
+            r"\b([A-Za-z]{2,6}\s+\d{3}[A-Za-z]?)\s+with\s+(\d{3}[A-Za-z]?(?:\s+or\s+\d{3}[A-Za-z]?)*)",
             r"(\1 AND_TIGHT \2)",
             s,
             flags=re.IGNORECASE,
@@ -310,16 +315,20 @@ class GeneralizedPrerequisiteCompiler:
             elif t_upper == "OR":
                 tokens.append("OR_INTRA")
             elif re.match(r"^[A-Za-z]{2,6}$", tok):
-                # Potential department code
-                if i + 1 < len(raw_words) and re.match(r"^\d{1,4}[A-Za-z]?$", raw_words[i + 1]):
+                # Potential department code paired with 3-digit course number
+                if i + 1 < len(raw_words) and re.match(r"^\d{3}[A-Za-z]?$", raw_words[i + 1]):
                     current_dept = t_upper
                     tokens.append(f"COURSE:{current_dept} {raw_words[i + 1].upper()}")
                     i += 2
                     continue
-            elif re.match(r"^\d{1,4}[A-Za-z]?$", tok):
-                # Standalone course number: propagate active department code
+            elif re.match(r"^\d{3}[A-Za-z]?$", tok):
+                # Guard against standalone numbers attached to unstripped credit keywords
+                if i + 1 < len(raw_words) and re.match(r"^credits?\.?$", raw_words[i + 1], re.IGNORECASE):
+                    i += 1
+                    continue
+
+                # Standalone 3-digit course number: propagate active department code
                 if current_dept:
-                    # Check if linked by preceding AND to another course in same dept
                     if tokens and tokens[-1] == "AND":
                         tokens[-1] = "AND_TIGHT"
                     tokens.append(f"COURSE:{current_dept} {t_upper}")
@@ -365,7 +374,6 @@ class GeneralizedPrerequisiteCompiler:
                     l = output_queue.pop()
                     output_queue.append(LogicNode(op=canon_op, children=[l, r]))
                 elif output_queue:
-                    # Unary fallback
                     output_queue.append(output_queue.pop())
 
         for tok in tokens:
@@ -395,7 +403,6 @@ class GeneralizedPrerequisiteCompiler:
         def simplify(n: LogicNode) -> LogicNode:
             n.children = [simplify(c) for c in n.children if c.op != "NULL"]
             if n.op in ("AND", "OR"):
-                # Flatten associative nesting of identical operations
                 flattened: List[LogicNode] = []
                 for c in n.children:
                     if c.op == n.op:
@@ -530,12 +537,10 @@ class GeneralizedPrerequisiteCompiler:
             return True, []
 
         if ntype == "OR":
-            # If ANY alternative in an OR block is met, the entire block is satisfied!
             for op in node.get("operands", []):
                 met, _ = GeneralizedPrerequisiteCompiler.get_missing_requirements(op, completed_set)
                 if met:
                     return True, []
-            # None met: format alternatives
             or_parts = []
             for op in node.get("operands", []):
                 _, miss = GeneralizedPrerequisiteCompiler.get_missing_requirements(op, completed_set)

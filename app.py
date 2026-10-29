@@ -66,17 +66,27 @@ def get_default_term_info() -> tuple[str, int]:
         return "Fall", year
 
 def prereq_text_for(course_obj) -> str:
-    if not course_obj or not getattr(course_obj, "prerequisites", None):
+    if not course_obj:
         return "None"
-    raw = course_obj.prerequisites
+    
+    # Check parsed AST dictionary first if available
+    parsed = getattr(course_obj, "parsed_prerequisites", None)
+    if isinstance(parsed, dict) and parsed.get("raw") and str(parsed.get("raw")).strip().lower() not in ("none", ""):
+        return str(parsed["raw"]).strip()
+
+    raw = getattr(course_obj, "prerequisites", None)
+    if not raw:
+        return "None"
     if isinstance(raw, dict):
-        return raw.get("raw") or "None"
+        return str(raw.get("raw") or raw.get("prerequisites_formula") or "None").strip()
     if isinstance(raw, str):
         try:
-            parsed = json.loads(raw)
-            return parsed.get("raw", raw) if isinstance(parsed, dict) else raw
+            parsed_json = json.loads(raw)
+            if isinstance(parsed_json, dict):
+                return str(parsed_json.get("raw") or parsed_json.get("prerequisites_formula") or raw).strip()
+            return raw.strip()
         except Exception:
-            return raw
+            return raw.strip()
     return "None"
 
 def evaluate_course_prereqs(course_obj, completed_set: set, earned_credits: float) -> dict:
@@ -340,10 +350,13 @@ def describe_wildcards(tokens: list[str]) -> list[str]:
         if level:
             levels_by_dept.setdefault(level.group(1), set()).add(int(level.group(2)))
             continue
-        rng = re.match(r"^([A-Z]+)(\d+[A-Z]?)-([A-Z]*)(\d+[A-Z]?)$", clean)
+        rng = re.match(r"^([A-Z]+)(\d+[A-Z]*)-([A-Z]*)(\d+[A-Z]*)$", clean)
         if rng:
             dept1, num1, dept2, num2 = rng.groups()
-            ranges.append(f"{dept1} {num1}–{num2}")
+            if dept2 and dept2 != dept1:
+                ranges.append(f"{dept1} {num1}–{dept2} {num2}")
+            else:
+                ranges.append(f"{dept1} {num1}–{num2}")
             continue
         other_tokens.append(tok)
 
@@ -372,6 +385,71 @@ def describe_wildcards(tokens: list[str]) -> list[str]:
         parts.append(f"Any {level_text} {dept} course")
 
     return parts + ranges + other_tokens
+
+def is_wildcard_token(tok: str) -> bool:
+    clean = normalize_id(tok)
+    # Any course range (e.g. ANTH210L-ANTH491, ANTH210-491, CS300-CS499, IT300-499)
+    if "-" in clean and re.search(r"\d", clean):
+        return True
+    # Course level wildcards (e.g. CS 3, CS 4, CS 3XX, CS3XX, IT 3)
+    if re.match(r"^[A-Z]+[1-5](?:XX)?$", clean):
+        return True
+    if re.match(r"^[A-Z]+\s*[1-5](?:\s*XX|\s*LEVEL)?$", str(tok).strip(), re.IGNORECASE):
+        return True
+    return False
+
+def partition_requirements(raw_reqs: list[dict]) -> tuple[list[dict], list[dict]]:
+    """
+    Smarter partitioner:
+    - If individual courses >= 3 + needed: strip ranges and keep in active requirements pool.
+    - If individual courses < 3 + needed: move entire requirement to General Education & Electives.
+    - Sequentially renumbers active requirements so the breakdown and pool match 1:1.
+    """
+    active_reqs = []
+    elective_reqs = []
+
+    for req in raw_reqs:
+        units = req.get("units", [])
+        needed = req.get("courses_needed", 1)
+        raw_name = req.get("group_name", "")
+
+        wildcards = [u for u in units if is_wildcard_token(u)]
+        regular = [u for u in units if not is_wildcard_token(u)]
+
+        if wildcards:
+            # Smarter Threshold: If regular individual courses are at least 3 + need
+            if len(regular) >= (3 + needed):
+                # Discard wildcards, keep requirement in Remaining Requirements pool
+                active_reqs.append({
+                    "group_name": raw_name,
+                    "courses_needed": needed,
+                    "units": regular
+                })
+            else:
+                # Discard from Remaining Requirements and send to Elective Choices
+                described = describe_wildcards(wildcards)
+                all_options = described + regular
+                display_title = ", ".join(all_options) if all_options else " or ".join(described or wildcards)
+                
+                elective_reqs.append({
+                    "group_name": display_title,
+                    "courses_needed": needed,
+                    "units": units,
+                    "is_gened": False
+                })
+        else:
+            active_reqs.append({
+                "group_name": raw_name,
+                "courses_needed": needed,
+                "units": regular
+            })
+
+    # Renumber active requirements sequentially to eliminate skipped group numbers
+    for idx, req in enumerate(active_reqs, start=1):
+        clean_title = re.sub(r"^Requirement\s+\d+\s*[-:]\s*", "", req.get("group_name", ""), flags=re.IGNORECASE).strip()
+        req["group_name"] = f"Requirement {idx} - {clean_title}" if clean_title else f"Requirement {idx}"
+
+    return active_reqs, elective_reqs
 
 # Render Free Tier Wake-Up & Health Check Endpoint
 @app.route("/healthz", methods=["GET"])
@@ -630,22 +708,32 @@ def planner():
             if file and file.filename.endswith(".pdf"):
                 try:
                     pdf_bytes = io.BytesIO(file.read())
-                    completed_courses, earned_credits, serialized_reqs, serialized_gen_eds = parse_audit_pdf(pdf_bytes)
+                    completed_courses, earned_credits, raw_serialized_reqs, raw_gen_eds = parse_audit_pdf(pdf_bytes)
                     audit_filename = file.filename
                     is_scanned = True
+
+                    # Partition into active requirements pool and elective requirements
+                    serialized_reqs, elective_reqs = partition_requirements(raw_serialized_reqs)
+                    serialized_gen_eds = raw_gen_eds + elective_reqs
+
                     if catalog:
                         completed_set = {normalize_id(c) for c in completed_courses}
+                        # Generates candidates strictly for active requirements
                         candidate_courses = get_candidate_courses_pool(serialized_reqs, catalog, completed_set, earned_credits)
                 except Exception as e:
                     error_msg = f"Failed to parse audit PDF: {str(e)}"
             elif request.form.get("retained_reqs_json") and request.form.get("retained_reqs_json") != "[]":
                 try:
-                    serialized_reqs = json.loads(request.form.get("retained_reqs_json", "[]"))
-                    serialized_gen_eds = json.loads(request.form.get("retained_gen_eds_json", "[]"))
+                    raw_serialized_reqs = json.loads(request.form.get("retained_reqs_json", "[]"))
+                    raw_gen_eds = json.loads(request.form.get("retained_gen_eds_json", "[]"))
                     completed_courses = json.loads(request.form.get("retained_completed_json", "[]"))
                     earned_credits = float(request.form.get("retained_earned_credits", 0.0) or 0.0)
                     audit_filename = request.form.get("retained_audit_filename", "")
                     is_scanned = True
+
+                    serialized_reqs, elective_reqs = partition_requirements(raw_serialized_reqs)
+                    serialized_gen_eds = raw_gen_eds + [e for e in elective_reqs if not any(g.get("group_name") == e["group_name"] for g in raw_gen_eds)]
+
                     if catalog:
                         completed_set = {normalize_id(c) for c in completed_courses}
                         candidate_courses = get_candidate_courses_pool(serialized_reqs, catalog, completed_set, earned_credits)
@@ -660,7 +748,11 @@ def planner():
             completed_json = request.form.get("completed_courses_json", "[]")
             earned_credits = float(request.form.get("earned_credits", 0.0))
             raw_gen_eds_json = request.form.get("serialized_gen_eds_json", "[]")
-            serialized_gen_eds = json.loads(raw_gen_eds_json)
+            raw_gen_eds = json.loads(raw_gen_eds_json)
+
+            raw_serialized_reqs = json.loads(raw_reqs_json)
+            serialized_reqs, elective_reqs = partition_requirements(raw_serialized_reqs)
+            serialized_gen_eds = raw_gen_eds + [e for e in elective_reqs if not any(g.get("group_name") == e["group_name"] for g in raw_gen_eds)]
 
             raw_locked_json = request.form.get("locked_sections_json", "[]")
             try:
@@ -961,10 +1053,14 @@ def planner():
                 error_msg = f"Failed to generate schedule: {str(e)}"
 
     def is_wildcard_token(tok: str) -> bool:
-        clean = tok.strip()
-        if re.search(r'^[A-Za-z]+\s*\d+-\d+', clean):
+        clean = normalize_id(tok)
+        # Any course range (e.g. ANTH210L-ANTH491, ANTH210-491, CS300-CS499, IT300-499)
+        if "-" in clean and re.search(r"\d", clean):
             return True
-        if re.match(r'^[A-Za-z]+\s*[1-5](xx)?$', clean, re.IGNORECASE):
+        # Course level wildcards (e.g. CS 3, CS 4, CS 3XX, CS3XX, IT 3)
+        if re.match(r"^[A-Z]+[1-5](?:XX)?$", clean):
+            return True
+        if re.match(r"^[A-Z]+\s*[1-5](?:\s*XX|\s*LEVEL)?$", tok.strip(), re.IGNORECASE):
             return True
         return False
 
@@ -976,32 +1072,41 @@ def planner():
         wildcards = [u for u in units if is_wildcard_token(u)]
         regular = [u for u in units if not is_wildcard_token(u)]
 
-        if regular:
-            display_required.append({
-                "group_name": group_name,
-                "needed": needed,
-                "options": regular
-            })
-        elif wildcards:
-            display_title = " or ".join(describe_wildcards(wildcards))
+        # If the requirement contains a range/wildcard, treat the entire group as an elective pool
+        if wildcards:
+            described_wildcards = describe_wildcards(wildcards)
+            # Combine the range with any discrete extra courses (e.g. ANTH 210L–491, ANTH 510)
+            combined_labels = described_wildcards + regular
+            display_title = ", ".join(combined_labels) if combined_labels else group_name
+
             manual_choice_requirements.append({
                 "group_name": display_title,
                 "needed": needed,
                 "is_gened": False
             })
+        elif regular:
+            # Discrete mandatory/choice requirements without wildcards
+            display_required.append({
+                "group_name": group_name,
+                "needed": needed,
+                "options": regular
+            })
 
     for req in serialized_gen_eds:
         clean_name = req.get("group_name", "General Education").replace("Gen Ed: ", "").strip()
+        is_gened = req.get("is_gened", True)
+
         for token in req.get("units", []):
             if isinstance(token, str) and token.startswith("GENED:"):
                 raw_tag = token.split("GENED:", 1)[1].strip()
                 clean_name = GENED_TOKEN_MAP.get(raw_tag, raw_tag.replace("_", " ").title())
+                is_gened = True
                 break
 
         manual_choice_requirements.append({
             "group_name": clean_name,
             "needed": req.get("courses_needed", 1),
-            "is_gened": True
+            "is_gened": is_gened
         })
 
     if is_scanned:
