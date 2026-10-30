@@ -115,6 +115,9 @@
 
                 <div class="form-btn-stack">
                     <button type="submit" class="btn-primary" onclick="document.getElementById('formActionInput').value='scan';">Scan Degree Audit</button>
+                    <button type="submit" class="btn-manual-entry" onclick="document.getElementById('formActionInput').value='sample'; document.getElementById('auditInput').required=false;">
+                        Use Sample Audit (One-Click Demo)
+                    </button>
                     <button type="submit" class="btn-manual-entry" onclick="document.getElementById('formActionInput').value='manual'; document.getElementById('auditInput').required=false;">
                         Build Schedule Manually (Without Degree Audit)
                     </button>

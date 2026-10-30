@@ -741,6 +741,27 @@ def planner():
                     error_msg = f"Failed to load retained audit: {str(e)}"
             else:
                 error_msg = "Please upload a valid .pdf degree audit file."
+                
+        elif action == "sample":
+            sample_path = os.path.join(os.path.dirname(__file__), "sample_audit.pdf")
+            if os.path.exists(sample_path):
+                try:
+                    with open(sample_path, "rb") as f:
+                        pdf_bytes = io.BytesIO(f.read())
+                    completed_courses, earned_credits, raw_serialized_reqs, raw_gen_eds = parse_audit_pdf(pdf_bytes)
+                    audit_filename = "sample_audit.pdf"
+                    is_scanned = True
+
+                    serialized_reqs, elective_reqs = partition_requirements(raw_serialized_reqs)
+                    serialized_gen_eds = raw_gen_eds + elective_reqs
+
+                    if catalog:
+                        completed_set = {normalize_id(c) for c in completed_courses}
+                        candidate_courses = get_candidate_courses_pool(serialized_reqs, catalog, completed_set, earned_credits)
+                except Exception as e:
+                    error_msg = f"Failed to parse sample audit: {str(e)}"
+            else:
+                error_msg = "sample_audit.pdf not found in the root directory. Please ensure the file is present in your repository."
 
         elif action == "generate":
             audit_filename = request.form.get("audit_filename", "")
