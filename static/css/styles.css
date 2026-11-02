@@ -1902,6 +1902,43 @@ input[type="file"] {
     background: #f0f7ff;
 }
 
+/* Linked & Soft-Locked Courses */
+.candidate-item-card.linked-card-and {
+    border-left: 0.25rem solid #7c3aed;
+    background-color: #faf5ff;
+}
+
+.candidate-item-card.linked-card-or {
+    border-left: 0.25rem solid #d97706;
+    background-color: #fffbeb;
+}
+
+.candidate-item-card.soft-locked-card {
+    border-left: 0.25rem solid #0284c7;
+    background-color: #f0f9ff;
+}
+
+.meta-pill.pill-link-and {
+    background-color: #f3e8ff;
+    color: #6b21a8;
+    border-color: #d8b4fe;
+    font-weight: 700;
+}
+
+.meta-pill.pill-link-or {
+    background-color: #fef3c7;
+    color: #92400e;
+    border-color: #fde68a;
+    font-weight: 700;
+}
+
+.meta-pill.pill-soft-locked {
+    background-color: #e0f2fe;
+    color: #0369a1;
+    border-color: #7dd3fc;
+    font-weight: 700;
+}
+
 .card-header-flex {
     display: flex;
     justify-content: space-between;

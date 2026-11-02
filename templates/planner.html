@@ -68,6 +68,12 @@
             <div class="alert-error">{{ error_msg }}</div>
         {% endif %}
 
+        {% if warnings %}
+            {% for w in warnings %}
+                <div class="alert-warning">{{ w }}</div>
+            {% endfor %}
+        {% endif %}
+
         {% if term_notice and is_scanned %}
             <div class="alert-warning">{{ term_notice }}</div>
         {% endif %}
@@ -179,11 +185,25 @@
                                             </div>
                                         {% endif %}
                                         Need <span class="req-needed">{{ req.needed }}</span> from:
-                                        <div class="tag-list tag-list-spaced">
-                                            {% for opt in req.options %}
-                                                <span class="course-tag">{{ opt }}</span>
+
+                                        {% if req.subgroups %}
+                                            {% for sub in req.subgroups %}
+                                                <div style="margin-top: 0.625rem; margin-bottom: 0.25rem; font-size: 10rem; font-weight: 700; color: var(--umb-blue);">
+                                                    {{ sub.name }}
+                                                </div>
+                                                <div class="tag-list tag-list-spaced">
+                                                    {% for opt in sub.options %}
+                                                        <span class="course-tag">{{ opt }}</span>
+                                                    {% endfor %}
+                                                </div>
                                             {% endfor %}
-                                        </div>
+                                        {% else %}
+                                            <div class="tag-list tag-list-spaced">
+                                                {% for opt in req.options %}
+                                                    <span class="course-tag">{{ opt }}</span>
+                                                {% endfor %}
+                                            </div>
+                                        {% endif %}
                                     </div>
                                 {% else %}
                                     <span class="empty-muted-text">No remaining unfulfilled requirements scanned.</span>

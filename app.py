@@ -232,6 +232,19 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager, complet
             "group_label": f"Choose {needed} from {group_name}" if needed > 1 else f"Choose 1 from {group_name}"
         }
 
+        subgroup_map = {}
+        if req.get("subgroups"):
+            for sub in req["subgroups"]:
+                s_name = sub.get("name", "")
+                s_cat = sub.get("category", "")
+                for u_tok in sub.get("units", []):
+                    u = CourseUnit.from_token(u_tok)
+                    for cid in u.courses:
+                        subgroup_map[normalize_id(cid)] = {
+                            "subgroup": s_name,
+                            "thematic_area": s_cat
+                        }
+
         for unit_token in req.get("units", []):
             if unit_token.startswith("GENED:"):
                 raw_tag = unit_token.split("GENED:", 1)[1].strip()
@@ -267,6 +280,12 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager, complet
 
             unit = CourseUnit.from_token(unit_token)
             target_ids = getattr(unit, "courses", [unit.raw_token])
+            is_linked_unit = unit.unit_type in ("AND", "OR") and len(target_ids) > 1
+            unit_link_id = f"link-{group_id}-u{req.get('units', []).index(unit_token)}" if is_linked_unit else None
+            unit_link_type = unit.unit_type if is_linked_unit else None
+            formatted_targets = [format_id(c) for c in target_ids] if is_linked_unit else []
+
+            unit_added_courses = []
 
             for cid in target_ids:
                 cid_clean = cid.strip()
@@ -286,7 +305,10 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager, complet
                         title_val = getattr(course_obj, "course_title", None) or f"{dept_clean} {raw_cnum}"
                         p_eval = evaluate_course_prereqs(course_obj, comp_set, earned_credits)
 
-                        candidate_list.append({
+                        norm_cid = normalize_id(f"{dept_clean}{raw_cnum}")
+                        sub_info = subgroup_map.get(norm_cid, {})
+
+                        course_entry = {
                             "subject_code": dept_clean if dept_clean else cid_clean,
                             "course_number": raw_cnum,
                             "course_title": title_val,
@@ -301,8 +323,22 @@ def get_candidate_courses_pool(serialized_reqs, catalog: CatalogManager, complet
                             "missing_prereqs": p_eval["missing"],
                             "prereq_warning": p_eval["message"],
                             "prereq_eval": p_eval,
+                            "link_id": unit_link_id,
+                            "link_type": unit_link_type,
+                            "linked_courses": formatted_targets,
+                            "subgroup": sub_info.get("subgroup"),
+                            "thematic_area": sub_info.get("thematic_area"),
                             **group_meta
-                        })
+                        }
+                        candidate_list.append(course_entry)
+                        unit_added_courses.append(course_entry)
+
+            # If only 1 course from the linked unit was offered, remove the orphan link
+            if is_linked_unit and len(unit_added_courses) < 2:
+                for c in unit_added_courses:
+                    c["link_id"] = None
+                    c["link_type"] = None
+                    c["linked_courses"] = []
 
     candidate_list.sort(key=lambda c: (c.get("req_id", ""), c["subject_code"], c["course_number"]))
     return candidate_list
@@ -318,7 +354,8 @@ def parse_audit_pdf(file_stream):
         {
             "group_name": req.group_name,
             "courses_needed": req.courses_needed,
-            "units": [u.raw_token for u in req.units]
+            "units": [u.raw_token for u in req.units],
+            "subgroups": req.subgroups if getattr(req, "subgroups", None) else None
         }
         for req in audit_result.requirements
     ]
@@ -399,12 +436,6 @@ def is_wildcard_token(tok: str) -> bool:
     return False
 
 def partition_requirements(raw_reqs: list[dict]) -> tuple[list[dict], list[dict]]:
-    """
-    Smarter partitioner:
-    - If individual courses >= 3 + needed: strip ranges and keep in active requirements pool.
-    - If individual courses < 3 + needed: move entire requirement to General Education & Electives.
-    - Sequentially renumbers active requirements so the breakdown and pool match 1:1.
-    """
     active_reqs = []
     elective_reqs = []
 
@@ -417,13 +448,12 @@ def partition_requirements(raw_reqs: list[dict]) -> tuple[list[dict], list[dict]
         regular = [u for u in units if not is_wildcard_token(u)]
 
         if wildcards:
-            # Smarter Threshold: If regular individual courses are at least 3 + need
             if len(regular) >= (3 + needed):
-                # Discard wildcards, keep requirement in Remaining Requirements pool
                 active_reqs.append({
                     "group_name": raw_name,
                     "courses_needed": needed,
-                    "units": regular
+                    "units": regular,
+                    "subgroups": req.get("subgroups")
                 })
             else:
                 # Discard from Remaining Requirements and send to Elective Choices
@@ -441,7 +471,8 @@ def partition_requirements(raw_reqs: list[dict]) -> tuple[list[dict], list[dict]
             active_reqs.append({
                 "group_name": raw_name,
                 "courses_needed": needed,
-                "units": regular
+                "units": regular,
+                "subgroups": req.get("subgroups")
             })
 
     # Renumber active requirements sequentially to eliminate skipped group numbers
@@ -899,6 +930,7 @@ def planner():
                     exclude_online=exclude_online
                 )
 
+                
                 priority_reqs = []
                 pool_reqs = []
 
@@ -908,6 +940,7 @@ def planner():
                     locked_course_map.setdefault(c_tag, {"sections": [], "dept": s.course_name.strip(), "num": s.course_number.strip()})
                     locked_course_map[c_tag]["sections"].append(s)
 
+                # 1. Missing Discussion/Lecture components for locked courses
                 for c_tag, data in locked_course_map.items():
                     cat_secs = catalog.get_sections(c_tag)
                     has_disc_in_catalog = any(scheduler.is_discussion_section(s) for s in cat_secs)
@@ -929,6 +962,61 @@ def planner():
                                 )
                             )
 
+                # 2. Identify soft-locked partner courses from '&' links
+                soft_locked_targets = []
+                soft_locked_norm_ids = set()
+
+                for item in locked_sections:
+                    c_meta = item.get("course") or {}
+                    if c_meta.get("link_type") == "AND" and c_meta.get("linked_courses"):
+                        origin_code = f"{c_meta.get('subject_code')} {c_meta.get('course_number')}"
+                        self_norm = normalize_id(f"{c_meta.get('subject_code', '')}{c_meta.get('course_number', '')}")
+
+                        for partner_id in c_meta["linked_courses"]:
+                            partner_norm = normalize_id(partner_id)
+                            # Skip checking the course against itself
+                            if partner_norm == self_norm:
+                                continue
+
+                            if partner_norm not in locked_course_map and partner_norm not in locked_course_ids:
+                                if partner_norm not in soft_locked_norm_ids:
+                                    soft_locked_norm_ids.add(partner_norm)
+                                    p_obj = catalog.get_course(partner_norm)
+                                    p_name = f"{p_obj.course_name} {p_obj.course_number}" if p_obj else partner_id
+                                    soft_locked_targets.append({
+                                        "id": partner_norm,
+                                        "name": p_name,
+                                        "origin": origin_code
+                                    })
+                                    priority_reqs.append(
+                                        RequirementGroup(
+                                            group_name=f"{p_name} (Soft-Locked with {origin_code})",
+                                            courses_needed=1,
+                                            units=[CourseUnit.from_token(partner_norm)]
+                                        )
+                                    )
+
+                # Also inspect candidate_courses for any course tagged is_soft_locked
+                for c in candidate_courses:
+                    if c.get("is_soft_locked") and c.get("soft_locked_by"):
+                        p_norm = normalize_id(f"{c['subject_code']}{c['course_number']}")
+                        if p_norm not in soft_locked_norm_ids and p_norm not in locked_course_map:
+                            soft_locked_norm_ids.add(p_norm)
+                            p_name = f"{c['subject_code']} {c['course_number']}"
+                            soft_locked_targets.append({
+                                "id": p_norm,
+                                "name": p_name,
+                                "origin": c["soft_locked_by"]
+                            })
+                            priority_reqs.append(
+                                RequirementGroup(
+                                    group_name=f"{p_name} (Soft-Locked with {c['soft_locked_by']})",
+                                    courses_needed=1,
+                                    units=[CourseUnit.from_token(p_norm)]
+                                )
+                            )
+
+                # 3. Assemble pool requirements (preserving '&' and '|' linked units)
                 if candidate_courses:
                     locked_courses_per_group = {}
                     for item in locked_sections:
@@ -940,28 +1028,71 @@ def planner():
 
                     grouped_units = {}
                     group_meta = {}
+                    seen_linked_units = set()
 
                     for c in candidate_courses:
                         token = normalize_id(f"{c['subject_code']}{c['course_number']}")
-                        if token in locked_course_map or token in locked_course_ids:
+                        # Skip if hard-locked or already placed in priority_reqs
+                        if token in locked_course_map or token in locked_course_ids or token in soft_locked_norm_ids:
                             continue
 
-                        # O(1) set-based evaluation using pre-compiled AST
                         course_obj = catalog.get_course(token)
                         p_eval = evaluate_course_prereqs(course_obj, completed_set, earned_credits) if check_prereqs else {"status": "met"}
                         if p_eval["status"] == "unmet":
-                            warnings.append(f"{c['subject_code']} {c['course_number']}: {p_eval['message']}")
                             continue
 
-                        unit = CourseUnit.from_token(token)
-                        if catalog.get_sections(token):
-                            gid = c.get("req_id") or "user-added"
+                        if not catalog.get_sections(token):
+                            continue
+
+                        gid = c.get("req_id") or "user-added"
+                        if gid not in group_meta:
+                            group_meta[gid] = {
+                                "name": c.get("req_group_name") or ("Added Courses" if gid == "user-added" else f"{c['subject_code']} {c['course_number']}"),
+                                "needed": int(c.get("req_needed") or 1)
+                            }
+
+                        link_id = c.get("link_id")
+                        link_type = c.get("link_type")
+
+                        # Reconstruct combined '&' or '|' units if courses share an active link
+                        if link_id and link_type in ("AND", "OR"):
+                            link_key = (gid, link_id)
+                            if link_key in seen_linked_units:
+                                continue
+                            seen_linked_units.add(link_key)
+
+                            # Gather partner courses belonging to this link in the current group
+                            partners = [
+                                p for p in candidate_courses
+                                if (p.get("req_id") or "user-added") == gid and p.get("link_id") == link_id
+                            ]
+
+                            valid_partner_tokens = []
+                            for p in partners:
+                                p_tok = normalize_id(f"{p['subject_code']}{p['course_number']}")
+                                if p_tok in locked_course_map or p_tok in locked_course_ids or p_tok in soft_locked_norm_ids:
+                                    continue
+                                p_obj = catalog.get_course(p_tok)
+                                p_ev = evaluate_course_prereqs(p_obj, completed_set, earned_credits) if check_prereqs else {"status": "met"}
+                                if p_ev["status"] == "unmet":
+                                    continue
+                                if catalog.get_sections(p_tok):
+                                    valid_partner_tokens.append(p_tok)
+
+                            if len(valid_partner_tokens) >= 2:
+                                delim = "&" if link_type == "AND" else "|"
+                                combined_token = delim.join(valid_partner_tokens)
+                                unit = CourseUnit(raw_token=combined_token, unit_type=link_type, courses=valid_partner_tokens)
+                                grouped_units.setdefault(gid, []).append(unit)
+                            elif len(valid_partner_tokens) == 1:
+                                # User deleted partner course -> convert remaining course to a standalone unit
+                                solo_tok = valid_partner_tokens[0]
+                                unit = CourseUnit(raw_token=solo_tok, unit_type="SINGLE", courses=[solo_tok])
+                                grouped_units.setdefault(gid, []).append(unit)
+                        else:
+                            # Standalone course
+                            unit = CourseUnit(raw_token=token, unit_type="SINGLE", courses=[token])
                             grouped_units.setdefault(gid, []).append(unit)
-                            if gid not in group_meta:
-                                group_meta[gid] = {
-                                    "name": c.get("req_group_name") or ("Added Courses" if gid == "user-added" else f"{c['subject_code']} {c['course_number']}"),
-                                    "needed": int(c.get("req_needed") or 1)
-                                }
 
                     for gid, units in grouped_units.items():
                         locked_count = len(locked_courses_per_group.get(gid, set()))
@@ -978,16 +1109,48 @@ def planner():
 
                 valid_reqs = priority_reqs + pool_reqs
 
+                # FIXED: Use len(locked_course_map) instead of distinct_seed
+                min_required_courses = len(locked_course_map) + len(soft_locked_targets)
+                target_course_count = max(target_course_count, min_required_courses)
+
                 raw_schedule = None
-                if not is_empty_pool:
-                    # Optimized bitmask schedule solver (<25ms execution time)
+                if not is_empty_pool or priority_reqs or locked_sec_objs:
                     raw_schedule = scheduler.solve_schedule(
                         requirements=valid_reqs,
                         catalog=catalog,
                         target_count=target_course_count,
                         preferences=prefs,
-                        fixed_sections=locked_sec_objs
+                        fixed_sections=locked_sec_objs,
+                        num_priority_reqs=len(priority_reqs)
                     )
+
+                # Diagnostic validation: If generation failed or a soft-lock could not be scheduled, identify why
+                scheduled_norm_ids = {normalize_id(f"{s.course_name}{s.course_number}") for s in (raw_schedule or [])}
+
+                for sl in soft_locked_targets:
+                    if sl["id"] not in scheduled_norm_ids:
+                        cat_secs = catalog.get_sections(sl["id"])
+                        has_disc = any(scheduler.is_discussion_section(s) for s in cat_secs)
+                        meets_pref_secs = [s for s in cat_secs if scheduler.section_meets_preferences(s, prefs)]
+
+                        if not meets_pref_secs:
+                            error_msg = (
+                                f"⚠️ Cannot schedule {sl['name']} (required by '&' link with {sl['origin']}): "
+                                f"None of its offered sections fit within your allowed days or time restrictions."
+                            )
+                        elif has_disc and not any(scheduler.is_discussion_section(s) for s in meets_pref_secs):
+                            error_msg = (
+                                f"⚠️ Cannot schedule {sl['name']} (required by '&' link with {sl['origin']}): "
+                                f"All of its required discussion sections conflict with your day or time restrictions."
+                            )
+                        else:
+                            error_msg = (
+                                f"⚠️ Cannot schedule {sl['name']} (required by '&' link with {sl['origin']}): "
+                                f"Every eligible section (or its discussion) conflicts with your locked course ({sl['origin']})."
+                            )
+                        # Abort displaying a partial/broken schedule that violates the '&' co-requisite
+                        raw_schedule = None
+                        break
 
                 schedule = []
                 locked_class_codes = {str(s.class_code) for s in locked_sec_objs}
@@ -1106,11 +1269,11 @@ def planner():
                 "is_gened": False
             })
         elif regular:
-            # Discrete mandatory/choice requirements without wildcards
             display_required.append({
                 "group_name": group_name,
                 "needed": needed,
-                "options": regular
+                "options": regular,
+                "subgroups": req.get("subgroups")
             })
 
     for req in serialized_gen_eds:

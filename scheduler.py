@@ -142,7 +142,8 @@ def solve_schedule(
     catalog: CatalogManager,
     target_count: int = 5,
     preferences: Optional[SchedulePreferences] = None,
-    fixed_sections: Optional[List[Section]] = None
+    fixed_sections: Optional[List[Section]] = None,
+    num_priority_reqs: int = 0
 ) -> Optional[List[Section]]:
     seed_schedule: List[Section] = list(fixed_sections) if fixed_sections else []
     seed_enrolled: Set[str] = set()
@@ -159,7 +160,8 @@ def solve_schedule(
             seed_enrolled.add(c_tag)
 
     distinct_seed = {re.sub(r'_(LEC|DISC)$', '', tag) for tag in seed_enrolled}
-    if not requirements or len(distinct_seed) >= target_count:
+    # Do not exit early if mandatory priority requirements (discussions / soft-locks) are still pending
+    if not requirements or (len(distinct_seed) >= target_count and num_priority_reqs == 0):
         return seed_schedule if seed_schedule else None
 
     possible_pool_courses = set()
@@ -175,7 +177,16 @@ def solve_schedule(
     best_schedule: List[Section] = list(seed_schedule)
     best_course_count = len(distinct_seed)
 
-    MAX_SEARCH_ITERATIONS = 120000
+    for req in requirements:
+        if any(u.courses and u.courses[0].startswith("ENGIN") for u in req.units):
+            req.units.sort(
+                key=lambda u: (
+                    0 if (u.courses and u.courses[0].startswith("ENGIN")) else 1,
+                    re.match(r"^([A-Z]+)", u.courses[0]).group(1) if (u.courses and re.match(r"^([A-Z]+)", u.courses[0])) else "ZZZ"
+                )
+            )
+
+    MAX_SEARCH_ITERATIONS = 250000
     iterations = 0
 
     def backtrack(
@@ -199,7 +210,8 @@ def solve_schedule(
             best_course_count = current_distinct_count
             best_schedule = list(active_sched)
 
-        if current_distinct_count >= effective_target:
+        # Do not terminate early until all mandatory priority requirements are satisfied
+        if current_distinct_count >= effective_target and req_idx >= num_priority_reqs:
             return list(active_sched)
 
         if req_idx >= len(requirements):
@@ -209,6 +221,9 @@ def solve_schedule(
         candidates = current_req.units
 
         if remaining_needed <= 0 or cand_idx >= len(candidates):
+            # If a mandatory priority requirement (soft-lock/discussion) failed to be scheduled, abort this branch
+            if req_idx < num_priority_reqs and remaining_needed > 0:
+                return None
             next_req_idx = req_idx + 1
             if next_req_idx >= len(requirements):
                 return None
@@ -218,36 +233,35 @@ def solve_schedule(
         unit = candidates[cand_idx]
         unit_courses = [c.upper() for c in unit.courses]
         sample_raw = unit_courses[0] if unit_courses else ""
-        is_disc_req = ":DISC_ONLY" in sample_raw
-        is_lec_req = ":LEC_ONLY" in sample_raw
-        sample_id = re.sub(r':(DISC_ONLY|LEC_ONLY)$', '', sample_raw).replace(" ", "").upper()
 
-        cat_secs = catalog.get_sections(sample_id)
-        has_disc = any(is_discussion_section(s) for s in cat_secs)
+        def is_course_enrolled(cid: str) -> bool:
+            clean = re.sub(r':(DISC_ONLY|LEC_ONLY)$', '', cid).replace(" ", "").upper()
+            if ":DISC_ONLY" in cid:
+                return f"{clean}_DISC" in active_enrolled
+            if ":LEC_ONLY" in cid:
+                return f"{clean}_LEC" in active_enrolled
 
-        already_taken = False
-        if has_disc:
-            lec_tag = f"{sample_id}_LEC"
-            disc_tag = f"{sample_id}_DISC"
-            if is_disc_req:
-                already_taken = disc_tag in active_enrolled
-            elif is_lec_req:
-                already_taken = lec_tag in active_enrolled
-            else:
-                already_taken = (lec_tag in active_enrolled and disc_tag in active_enrolled) or (sample_id in distinct_courses)
+            c_secs = catalog.get_sections(clean)
+            if any(is_discussion_section(s) for s in c_secs):
+                return (f"{clean}_LEC" in active_enrolled and f"{clean}_DISC" in active_enrolled) or (clean in distinct_courses)
+            return clean in distinct_courses
+
+        # If it's an AND unit, taking any course means the unit cannot be taken again
+        if unit.unit_type == "AND":
+            already_taken = any(is_course_enrolled(c) for c in unit.courses)
+        elif unit.unit_type == "OR":
+            already_taken = all(is_course_enrolled(c) for c in unit.courses)
         else:
-            already_taken = sample_id in distinct_courses
+            already_taken = is_course_enrolled(sample_raw)
 
         if already_taken:
             return backtrack(req_idx, cand_idx + 1, remaining_needed, active_sched, active_enrolled, active_mask)
 
-        # Retrieve section bundles with precomputed bitmasks
         bundles_with_masks = []
         if unit.unit_type == "OR":
             for cid in unit.courses:
                 bundles_with_masks.extend(bundle_sections_for_course(cid, catalog, active_mask, preferences))
         elif unit.unit_type == "AND":
-            # For linked AND pairs, verify non-overlap between components
             per_course = [bundle_sections_for_course(cid, catalog, active_mask, preferences) for cid in unit.courses]
             if all(per_course):
                 from itertools import product
@@ -267,20 +281,37 @@ def solve_schedule(
             bundles_with_masks = bundle_sections_for_course(sample_raw, catalog, active_mask, preferences)
 
         for sec_group, b_mask in bundles_with_masks:
-            # CPU single-cycle collision check
             if b_mask != 0 and (b_mask & active_mask) != 0:
                 continue
 
             added_tags = []
             for added_sec in sec_group:
                 c_clean = f"{added_sec.course_name.strip()}{added_sec.course_number.strip()}".upper()
-                if has_disc:
+                sec_catalog_secs = catalog.get_sections(c_clean)
+                course_has_disc = any(is_discussion_section(s) for s in sec_catalog_secs)
+
+                if course_has_disc:
                     added_tags.append(f"{c_clean}_DISC" if is_discussion_section(added_sec) else f"{c_clean}_LEC")
                 else:
                     added_tags.append(c_clean)
 
             active_sched.extend(sec_group)
             active_enrolled.update(added_tags)
+
+            # Enforce EE Elective rules: at least 4 ENGIN electives and single thematic area
+            is_ee_req = any("ENGIN" in u.courses[0] for u in current_req.units if u.courses)
+            if is_ee_req:
+                ee_unit_cids = {c.upper() for u in current_req.units for c in u.courses}
+                thematic_chosen = set()
+                for s in active_sched:
+                    s_cid = f"{s.course_name.strip()}{s.course_number.strip()}".upper()
+                    d_code = s.course_name.strip().upper()
+                    if s_cid in ee_unit_cids and d_code in ("PHYSIC", "CHEM", "BIOL", "ENVSCI"):
+                        thematic_chosen.add(d_code)
+                if len(thematic_chosen) > 1:
+                    del active_sched[-len(sec_group):]
+                    active_enrolled.difference_update(added_tags)
+                    continue
 
             result = backtrack(
                 req_idx=req_idx,
@@ -296,6 +327,10 @@ def solve_schedule(
             del active_sched[-len(sec_group):]
             active_enrolled.difference_update(added_tags)
 
+        # If a priority requirement has zero valid bundles, fail immediately rather than silently skipping it
+        if req_idx < num_priority_reqs:
+            return None
+
         return backtrack(
             req_idx=req_idx,
             cand_idx=cand_idx + 1,
@@ -309,4 +344,8 @@ def solve_schedule(
     exact_match = backtrack(0, 0, initial_needed, seed_schedule, seed_enrolled, seed_mask)
     if exact_match is not None:
         return exact_match
-    return best_schedule if len(best_schedule) > len(seed_schedule) or best_schedule else None
+
+    # Return best_schedule whenever sections exist (including locked seed courses)
+    if best_schedule and len(best_schedule) > 0:
+        return best_schedule
+    return None

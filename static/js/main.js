@@ -22,6 +22,7 @@
 // =================================================================
 let candidatePool = [];
 let lockedSections = [];
+let hiddenOrCourses = [];
 let currentModalSections = [];
 let activeModalCourse = null;
 let activeModalSectionIndex = 0;
@@ -404,6 +405,29 @@ function lockSection(dept, num, sectionData) {
         section: sectionData
     });
 
+    // Enforce link rules on partner courses
+    if (courseData.link_id) {
+        const currentCode = `${dept} ${num}`.replace(/\s+/g, "").toUpperCase();
+        if (courseData.link_type === "AND") {
+            // Soft-lock the partner in the pool
+            candidatePool.forEach(c => {
+                if (c.link_id === courseData.link_id && `${c.subject_code}${c.course_number}`.toUpperCase() !== currentCode) {
+                    c.is_soft_locked = true;
+                    c.soft_locked_by = `${dept} ${num}`;
+                }
+            });
+        } else if (courseData.link_type === "OR") {
+            // Temporarily suppress the alternative course from the pool
+            const suppressed = candidatePool.filter(c => 
+                c.link_id === courseData.link_id && `${c.subject_code}${c.course_number}`.toUpperCase() !== currentCode
+            );
+            suppressed.forEach(s => hiddenOrCourses.push(s));
+            candidatePool = candidatePool.filter(c => 
+                !(c.link_id === courseData.link_id && `${c.subject_code}${c.course_number}`.toUpperCase() !== currentCode)
+            );
+        }
+    }
+
     renderAllLockedSections();
 
     const selectElem = document.getElementById(`section-select-${dept}-${num}`);
@@ -411,6 +435,16 @@ function lockSection(dept, num, sectionData) {
     if (selectElem && selectElem.dataset.sectionsJson) {
         try { allSections = JSON.parse(selectElem.dataset.sectionsJson); } catch (e) {}
     }
+    if (allSections.length === 0) {
+        const cacheKey = getCourseCacheKey(dept, num);
+        const cached = courseDetailsCache.get(cacheKey);
+        if (cached && Array.isArray(cached.sections)) {
+            allSections = cached.sections;
+        } else if (courseData && Array.isArray(courseData.sections)) {
+            allSections = courseData.sections;
+        }
+    }
+
     const hasDiscussions = allSections.some(s => String(s.section).trim().toUpperCase().endsWith("D"));
     const hasLectures = allSections.some(s => !String(s.section).trim().toUpperCase().endsWith("D"));
     const requiresBoth = hasDiscussions && hasLectures;
@@ -420,6 +454,7 @@ function lockSection(dept, num, sectionData) {
         String(ls.course.course_number).trim().toUpperCase() === String(num).trim().toUpperCase()
     ).length;
 
+    // Only remove from candidate pool when all components (lecture + discussion) are locked
     if (!requiresBoth || totalLockedForCourse >= 2) {
         candidatePool = candidatePool.filter(c => !(
             String(c.subject_code).trim().toUpperCase() === String(dept).trim().toUpperCase() && 
@@ -453,33 +488,34 @@ function unlockSection(classCode, term = null) {
             window.customCourseCounter = customCourseCounter;
         }
     } else if (unlockedCourse) {
-        const gid = unlockedCourse.req_id || "user-added";
+        // Return ONLY this course back to the pool if it isn't already there
+        const alreadyInPool = candidatePool.some(c => 
+            String(c.subject_code).trim().toUpperCase() === String(unlockedCourse.subject_code).trim().toUpperCase() && 
+            String(c.course_number).trim().toUpperCase() === String(unlockedCourse.course_number).trim().toUpperCase()
+        );
+        if (!alreadyInPool) {
+            candidatePool.push(JSON.parse(JSON.stringify(unlockedCourse)));
+        }
 
-        if (gid === "user-added") {
-            const alreadyInPool = candidatePool.some(c => 
-                String(c.subject_code).trim().toUpperCase() === String(unlockedCourse.subject_code).trim().toUpperCase() && 
-                String(c.course_number).trim().toUpperCase() === String(unlockedCourse.course_number).trim().toUpperCase()
-            );
-            if (!alreadyInPool) {
-                candidatePool.push(unlockedCourse);
-            }
-        } else if (Array.isArray(window.MASTER_CATALOG_CANDIDATES)) {
-            window.MASTER_CATALOG_CANDIDATES.forEach(masterCourse => {
-                if (masterCourse.req_id === gid) {
-                    const isCurrentlyLocked = lockedSections.some(ls => 
-                        ls.course && 
-                        String(ls.course.subject_code).trim().toUpperCase() === String(masterCourse.subject_code).trim().toUpperCase() && 
-                        String(ls.course.course_number).trim().toUpperCase() === String(masterCourse.course_number).trim().toUpperCase()
-                    );
-                    const alreadyInPool = candidatePool.some(c => 
-                        String(c.subject_code).trim().toUpperCase() === String(masterCourse.subject_code).trim().toUpperCase() && 
-                        String(c.course_number).trim().toUpperCase() === String(masterCourse.course_number).trim().toUpperCase()
-                    );
-                    if (!isCurrentlyLocked && !alreadyInPool) {
-                        candidatePool.push(masterCourse);
+        // Restore link relationships
+        if (unlockedCourse.link_id) {
+            const linkId = unlockedCourse.link_id;
+            const otherLockedSameLink = lockedSections.some(ls => ls.course && ls.course.link_id === linkId);
+
+            if (unlockedCourse.link_type === "AND" && !otherLockedSameLink) {
+                // Remove soft-lock flag from partner
+                candidatePool.forEach(c => {
+                    if (c.link_id === linkId) {
+                        c.is_soft_locked = false;
+                        delete c.soft_locked_by;
                     }
-                }
-            });
+                });
+            } else if (unlockedCourse.link_type === "OR" && !otherLockedSameLink) {
+                // Restore temporarily hidden '|' partner
+                const returning = hiddenOrCourses.filter(c => c.link_id === linkId);
+                returning.forEach(r => candidatePool.push(r));
+                hiddenOrCourses = hiddenOrCourses.filter(c => c.link_id !== linkId);
+            }
         }
     }
 
@@ -511,6 +547,83 @@ function clearAllLockedSections() {
 // =================================================================
 // 6. CANDIDATE POOL UI & DYNAMIC RENDERING
 // =================================================================
+function isCourseFullyLocked(dept, num) {
+    const d = String(dept).trim().toUpperCase();
+    const n = String(num).trim().toUpperCase();
+    const lockedForCourse = lockedSections.filter(ls => 
+        ls.course &&
+        String(ls.course.subject_code).trim().toUpperCase() === d &&
+        String(ls.course.course_number).trim().toUpperCase() === n
+    );
+    if (lockedForCourse.length === 0) return false;
+
+    // Check if catalog sections require a discussion
+    const selectElem = document.getElementById(`section-select-${dept}-${num}`);
+    let allSections = [];
+    if (selectElem && selectElem.dataset.sectionsJson) {
+        try { allSections = JSON.parse(selectElem.dataset.sectionsJson); } catch (e) {}
+    }
+    if (allSections.length === 0) {
+        const cacheKey = getCourseCacheKey(dept, num);
+        const cached = courseDetailsCache.get(cacheKey);
+        if (cached && cached.sections) allSections = cached.sections;
+    }
+
+    const hasDiscussions = allSections.some(s => String(s.section).trim().toUpperCase().endsWith("D"));
+    const hasLectures = allSections.some(s => !String(s.section).trim().toUpperCase().endsWith("D"));
+    
+    if (hasDiscussions && hasLectures) {
+        const hasLecLocked = lockedForCourse.some(ls => !String(ls.section.section).trim().toUpperCase().endsWith("D"));
+        const hasDiscLocked = lockedForCourse.some(ls => String(ls.section.section).trim().toUpperCase().endsWith("D"));
+        return hasLecLocked && hasDiscLocked;
+    }
+    return true;
+}
+
+function countSatisfiedUnitsForGroup(gid) {
+    if (!Array.isArray(lockedSections) || lockedSections.length === 0) return 0;
+    
+    const lockedInGroup = lockedSections.filter(ls => ls.course && ls.course.req_id === gid);
+    if (lockedInGroup.length === 0) return 0;
+
+    let satisfiedCount = 0;
+    const evaluatedLinks = new Set();
+    const evaluatedStandalone = new Set();
+
+    lockedInGroup.forEach(ls => {
+        const c = ls.course;
+        const cCode = `${c.subject_code}${c.course_number}`.toUpperCase();
+
+        if (c.link_id) {
+            if (evaluatedLinks.has(c.link_id)) return;
+            evaluatedLinks.add(c.link_id);
+
+            if (c.link_type === "AND") {
+                // An '&' pair counts as 1 satisfied unit ONLY when ALL paired courses (and discussions) are locked
+                const allPartners = c.linked_courses || [];
+                const allFullyLocked = allPartners.length > 0 && allPartners.every(pStr => {
+                    const parts = pStr.trim().split(/\s+/);
+                    return isCourseFullyLocked(parts[0], parts[1] || "");
+                });
+                if (allFullyLocked) satisfiedCount++;
+            } else if (c.link_type === "OR") {
+                // An '|' choice satisfies the unit when at least one alternative is fully locked
+                if (isCourseFullyLocked(c.subject_code, c.course_number)) {
+                    satisfiedCount++;
+                }
+            }
+        } else {
+            if (evaluatedStandalone.has(cCode)) return;
+            evaluatedStandalone.add(cCode);
+            if (isCourseFullyLocked(c.subject_code, c.course_number)) {
+                satisfiedCount++;
+            }
+        }
+    });
+
+    return satisfiedCount;
+}
+
 function renderCandidatePoolUI() {
     const container = document.getElementById("candidateList");
     if (!container) return;
@@ -548,11 +661,12 @@ function renderCandidatePoolUI() {
         if (gid === "user-added") {
             netNeeded = grp.courses.length;
         } else {
-            const lockedCount = countLockedDistinctForGroup(gid);
-            netNeeded = Math.max(0, grp.baseNeeded - lockedCount);
+            const satisfiedUnits = countSatisfiedUnitsForGroup(gid);
+            netNeeded = Math.max(0, grp.baseNeeded - satisfiedUnits);
         }
 
-        if (netNeeded <= 0) return;
+        // Do not remove the requirement group if it still has active courses in the pool!
+        if (netNeeded <= 0 && grp.courses.length === 0) return;
 
         totalVisibleCourses += grp.courses.length;
         const totalGroupCourses = grp.courses.length;
@@ -564,7 +678,9 @@ function renderCandidatePoolUI() {
                 <div class="candidate-group-header clickable" onclick="toggleReqGroup('${gid}')" role="button" tabindex="0">
                     <span class="candidate-group-title">
                         ${escapeHtml(grp.name)}
-                        <span class="meta-pill pill-req inline-req-pill">Need ${netNeeded}</span>
+                        ${netNeeded > 0 
+                            ? `<span class="meta-pill pill-req inline-req-pill">Need ${netNeeded}</span>` 
+                            : `<span class="meta-pill pill-prereq-met inline-req-pill">✓ Satisfied</span>`}
                     </span>
                     <div class="group-header-right">
                         <span class="meta-pill pill-neutral pill-course-count">${totalGroupCourses} Course${totalGroupCourses === 1 ? "" : "s"}</span>
@@ -575,7 +691,7 @@ function renderCandidatePoolUI() {
                 <div class="candidate-group-grid ${isOpen ? "" : "collapsed"}" id="group-grid-${gid}">
         `;
 
-        grp.courses.forEach(c => {
+        function renderCardHtml(c) {
             const courseTitle = c.course_title || c.name || `${c.subject_code} ${c.course_number}`;
             const safeTitle = escapeHtml(courseTitle);
             const secCount = parseInt(c.sections_count, 10) || 1;
@@ -583,8 +699,27 @@ function renderCandidatePoolUI() {
             const hasMissingPrereqs = Array.isArray(c.missing_prereqs) && c.missing_prereqs.length > 0;
             const missingText = hasMissingPrereqs ? escapeHtml(c.missing_prereqs.join(", ")) : "";
 
-            html += `
-                <div class="candidate-item-card ${hasMissingPrereqs ? "has-prereq-warning" : ""}" 
+            let linkPillHtml = "";
+            let linkCardClass = "";
+            const cleanSelf = `${c.subject_code} ${c.course_number}`.replace(/\s+/g, "").toUpperCase();
+
+            if (c.link_id && Array.isArray(c.linked_courses)) {
+                const partnerList = c.linked_courses.filter(x => x.replace(/\s+/g, "").toUpperCase() !== cleanSelf).join(", ");
+                if (c.link_type === "AND") {
+                    linkCardClass = c.is_soft_locked ? "soft-locked-card" : "linked-card-and";
+                    if (c.is_soft_locked) {
+                        linkPillHtml = `<span class="meta-pill pill-soft-locked" title="Soft-locked: Must be taken together with ${escapeHtml(c.soft_locked_by)}">🔒 Soft-Locked with ${escapeHtml(c.soft_locked_by)}</span>`;
+                    } else {
+                        linkPillHtml = `<span class="meta-pill pill-link-and" title="Linked with ${escapeHtml(partnerList)}">🔗 &amp; Linked: ${escapeHtml(partnerList)}</span>`;
+                    }
+                } else if (c.link_type === "OR") {
+                    linkCardClass = "linked-card-or";
+                    linkPillHtml = `<span class="meta-pill pill-link-or" title="Alternative choice with ${escapeHtml(partnerList)}">⚬ | Choice Linked: ${escapeHtml(partnerList)}</span>`;
+                }
+            }
+
+            return `
+                <div class="candidate-item-card ${hasMissingPrereqs ? "has-prereq-warning" : ""} ${linkCardClass}" 
                      id="candidate-card-${c.subject_code}-${c.course_number}"
                      data-code="${c.subject_code} ${c.course_number}"
                      data-dept="${c.subject_code}"
@@ -607,6 +742,7 @@ function renderCandidatePoolUI() {
 
                     <div class="candidate-meta">
                         <span class="meta-pill pill-blue">${c.credits || 3} cr</span>
+                        ${linkPillHtml}
                         ${!hasMissingPrereqs && c.prereq_status === "met" ? '<span class="meta-pill pill-prereq-met">✓ Prereqs Met</span>' : ""}
                     </div>
                     <select class="section-select-dropdown" id="section-select-${c.subject_code}-${c.course_number}" 
@@ -615,7 +751,36 @@ function renderCandidatePoolUI() {
                     </select>
                 </div>
             `;
-        });
+        }
+
+        const hasSubgroups = grp.courses.some(c => c.subgroup);
+
+        if (hasSubgroups) {
+            const subMap = new Map();
+            grp.courses.forEach(c => {
+                const sgName = c.subgroup || "Other Electives";
+                if (!subMap.has(sgName)) subMap.set(sgName, []);
+                subMap.get(sgName).push(c);
+            });
+
+            subMap.forEach((subCourses, sgName) => {
+                html += `
+                    <div class="candidate-subgroup-heading" style="grid-column: 1 / -1; margin-top: 0.75rem; margin-bottom: 0.25rem; padding-bottom: 0.25rem; border-bottom: 1px dashed #cbd5e1; display: flex">
+                        <span style="font-size: 1.5rem; font-weight: 700; color: var(--umb-blue);">
+                            ${escapeHtml(sgName)}
+                        </span>
+                        <span class="meta-pill pill-neutral" style="margin-left: 0.375rem;">${subCourses.length} Courses</span>
+                    </div>
+                `;
+                subCourses.forEach(c => {
+                    html += renderCardHtml(c);
+                });
+            });
+        } else {
+            grp.courses.forEach(c => {
+                html += renderCardHtml(c);
+            });
+        }
 
         html += `
                 </div>
@@ -679,12 +844,117 @@ function addCourseToPool(courseData, btnElement) {
 }
 
 function removeCourseFromPool(dept, num) {
+    const targetDept = String(dept).trim().toUpperCase();
+    const targetNum = String(num).trim().toUpperCase();
+
+    const targetCourse = candidatePool.find(c => 
+        String(c.subject_code).trim().toUpperCase() === targetDept && 
+        String(c.course_number).trim().toUpperCase() === targetNum
+    );
+
+    if (targetCourse && targetCourse.link_id) {
+        const linkId = targetCourse.link_id;
+
+        // 1. Partner in pool: destroy link, convert to standalone
+        candidatePool.forEach(c => {
+            if (c.link_id === linkId && !(String(c.subject_code).trim().toUpperCase() === targetDept && String(c.course_number).trim().toUpperCase() === targetNum)) {
+                c.link_id = null;
+                c.link_type = null;
+                c.linked_courses = [];
+                c.is_soft_locked = false;
+                delete c.soft_locked_by;
+            }
+        });
+
+        // 2. Partner in hiddenOrCourses (from '|' link): restore to pool as standalone
+        const restored = hiddenOrCourses.filter(c => c.link_id === linkId);
+        restored.forEach(c => {
+            c.link_id = null;
+            c.link_type = null;
+            c.linked_courses = [];
+            candidatePool.push(c);
+        });
+        hiddenOrCourses = hiddenOrCourses.filter(c => c.link_id !== linkId);
+
+        // 3. Partner in locked sections: sever its link metadata
+        lockedSections.forEach(ls => {
+            if (ls.course && ls.course.link_id === linkId) {
+                ls.course.link_id = null;
+                ls.course.link_type = null;
+                ls.course.linked_courses = [];
+            }
+        });
+    }
+
     candidatePool = candidatePool.filter(c => !(
-        String(c.subject_code).trim().toUpperCase() === String(dept).trim().toUpperCase() && 
-        String(c.course_number).trim().toUpperCase() === String(num).trim().toUpperCase()
+        String(c.subject_code).trim().toUpperCase() === targetDept && 
+        String(c.course_number).trim().toUpperCase() === targetNum
     ));
     renderCandidatePoolUI();
     updateCatalogSearchButtons();
+}
+
+function deleteLockedSectionCompletely(classCode, term = null) {
+    const targetCode = String(classCode);
+    const targetTerm = term || getActiveTerm();
+
+    const lockedItem = lockedSections.find(ls => 
+        String(ls.section.class_code) === targetCode && 
+        (!term || String(ls.section.term || getActiveTerm()) === String(targetTerm))
+    );
+    if (!lockedItem) return;
+
+    const isCustom = targetCode.startsWith("CUST-") || lockedItem.is_custom || (lockedItem.course && lockedItem.course.is_custom);
+    const courseObj = lockedItem.course;
+
+    const secKey = getSectionKey(lockedItem.section);
+    lockedSections = lockedSections.filter(ls => getSectionKey(ls.section) !== secKey);
+    renderAllLockedSections();
+
+    if (isCustom) {
+        if (customCourseCounter > 1) {
+            customCourseCounter--;
+            window.customCourseCounter = customCourseCounter;
+        }
+    } else if (courseObj) {
+        const dept = String(courseObj.subject_code).trim().toUpperCase();
+        const num = String(courseObj.course_number).trim().toUpperCase();
+
+        candidatePool = candidatePool.filter(c => !(
+            String(c.subject_code).trim().toUpperCase() === dept &&
+            String(c.course_number).trim().toUpperCase() === num
+        ));
+
+        if (courseObj.link_id) {
+            const linkId = courseObj.link_id;
+
+            // Partner in candidatePool: sever link, convert to standalone
+            candidatePool.forEach(c => {
+                if (c.link_id === linkId) {
+                    c.link_id = null;
+                    c.link_type = null;
+                    c.linked_courses = [];
+                    c.is_soft_locked = false;
+                    delete c.soft_locked_by;
+                }
+            });
+
+            // Partner in hiddenOrCourses (from '|' link): restore as standalone
+            const restored = hiddenOrCourses.filter(c => c.link_id === linkId);
+            restored.forEach(c => {
+                c.link_id = null;
+                c.link_type = null;
+                c.linked_courses = [];
+                candidatePool.push(c);
+            });
+            hiddenOrCourses = hiddenOrCourses.filter(c => c.link_id !== linkId);
+        }
+    }
+
+    renderCandidatePoolUI();
+    updateCatalogSearchButtons();
+    syncLockedInput();
+    syncPoolInput();
 }
 
 function clearAllCandidateCourses() {
@@ -1748,43 +2018,6 @@ function copyClassCode(buttonElement, classCode) {
     }).catch(err => {
         console.error("Failed to copy class code:", err);
     });
-}
-
-function deleteLockedSectionCompletely(classCode, term = null) {
-    const targetCode = String(classCode);
-    const targetTerm = term || getActiveTerm();
-
-    const lockedItem = lockedSections.find(ls => 
-        String(ls.section.class_code) === targetCode && 
-        (!term || String(ls.section.term || getActiveTerm()) === String(targetTerm))
-    );
-    if (!lockedItem) return;
-
-    const isCustom = targetCode.startsWith("CUST-") || lockedItem.is_custom || (lockedItem.course && lockedItem.course.is_custom);
-    const courseObj = lockedItem.course;
-
-    const secKey = getSectionKey(lockedItem.section);
-    lockedSections = lockedSections.filter(ls => getSectionKey(ls.section) !== secKey);
-    renderAllLockedSections();
-
-    if (isCustom) {
-        if (customCourseCounter > 1) {
-            customCourseCounter--;
-            window.customCourseCounter = customCourseCounter;
-        }
-    } else if (courseObj) {
-        const dept = String(courseObj.subject_code).trim().toUpperCase();
-        const num = String(courseObj.course_number).trim().toUpperCase();
-        candidatePool = candidatePool.filter(c => !(
-            String(c.subject_code).trim().toUpperCase() === dept &&
-            String(c.course_number).trim().toUpperCase() === num
-        ));
-    }
-
-    renderCandidatePoolUI();
-    updateCatalogSearchButtons();
-    syncLockedInput();
-    syncPoolInput();
 }
 
 function handleScheduledDelete(dept, num, classCode, isLocked, action, btnElem) {

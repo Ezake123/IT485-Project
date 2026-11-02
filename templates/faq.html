@@ -190,7 +190,7 @@
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>Many students often have ways to receive prerequisite waivers from faculty advisors. Keeping this option checked ensures the timetable solver doesn't refuse to generate an otherwise perfect weekly schedule due to an automated mismatch. ClassPick will still display amber warning banners (<code>⚠️ Missing Prerequisite</code>) on any scheduled course card that needs attention so you can review it before registering.</p>
+                                <p>Many students often have ways to receive prerequisite waivers from faculty advisors. Keeping this option checked ensures the timetable solver doesn't refuse to generate an otherwise perfect weekly schedule due to an automated mismatch. ClassPick will still display amber warning banners (<code>Missing Prerequisite</code>) on any scheduled course card that needs attention so you can review it before registering.</p>
                             </div>
                         </div>
 
@@ -281,7 +281,17 @@
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>The requirement quota automatically decrements in real-time. Once the quota reaches zero, the entire group is satisfied and safely hidden so the scheduler only looks for remaining unfulfilled slots. The section lockedd will be passed onto the "Locked-In Section".</p>
+                                <p>The requirement quota automatically decrements in real-time. Once the quota reaches zero and all necessary components (such as required discussion sections) are locked, the group is satisfied and safely hidden so the scheduler only looks for remaining unfulfilled slots. The section locked will be passed onto the "Locked-In Section".</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>How do linked courses with "&" and "|" work in the course pool?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>Some degree audit rules require courses to be taken together as co-requisites (linked with "&", such as a physics lecture and its accompanying lab) or as alternative options (linked with "|"). When courses share an "&" link and you lock one course, ClassPick automatically soft-locks the partner course so that the solver requires both to be scheduled simultaneously. If courses share a "|" choice link, locking one course temporarily removes the other option from your pool to keep your workspace clean. If you unlock the course, the link and partner return. If you delete one course from a pair, the link is permanently dissolved and the remaining partner converts into a standalone course.</p>
                             </div>
                         </div>
                     </div>
@@ -357,11 +367,21 @@
 
                         <div class="faq-q-item">
                             <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
+                                <span>Why does my generated schedule display more cards than my "Target Number of Courses"?</span>
+                                <span class="accordion-arrow">▼</span>
+                            </div>
+                            <div class="faq-q-answer collapsed">
+                                <p>The Target Number of Courses setting defines the number of parent academic courses you wish to take (typically 5 for a full-time semester). However, certain classes such as science lectures, computer science courses, or calculus courses require a separate mandatory discussion section (often ending with a "D", like Sec 01D) or an accompanying laboratory section. Because lectures, discussions, and labs hold distinct meeting times and separate 4- or 5-digit enrollment class codes in WISER, each component is scheduled as its own card and calendar block. For example, a 5-course schedule where two courses require discussion sections will display 7 total scheduled blocks.</p>
+                            </div>
+                        </div>
+
+                        <div class="faq-q-item">
+                            <div class="faq-q-trigger" onclick="toggleFaqQuestion(this)">
                                 <span>What should I do if "No valid schedule combinations found" appears?</span>
                                 <span class="accordion-arrow">▼</span>
                             </div>
                             <div class="faq-q-answer collapsed">
-                                <p>This indicates your restrictions were too tight to fit your target course load. Try checking additional allowed meeting days, broadening your time window, or checking "Ignore course capacity limits".</p>
+                                <p>This indicates your restrictions were too tight to fit your target course load. Try checking additional allowed meeting days, broadening your time window, or checking "Ignore course capacity limits". If you have locked a course that requires a mandatory discussion or an "&" co-requisite partner, ensure your allowed times and days leave open time slots for those required companion sections to fit.</p>
                             </div>
                         </div>
                     </div>

@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import time
 from typing import List, Optional, Set, Dict, Any
+import re
 from prerequisite_parser import prerequisite_compiler, normalize_id
 
 #-----------------------------------------------------------------
@@ -101,10 +102,22 @@ class CourseUnit:
     @classmethod
     def from_token(cls, token: str) -> CourseUnit:
         clean = token.replace(" ", "").upper()
-        if "&" in clean:
-            return cls(raw_token=token, unit_type="AND", courses=clean.split("&"))
-        elif "|" in clean:
-            return cls(raw_token=token, unit_type="OR", courses=clean.split("|"))
+        if "&" in clean or "|" in clean:
+            delim = "&" if "&" in clean else "|"
+            unit_type = "AND" if delim == "&" else "OR"
+            raw_parts = clean.split(delim)
+            courses = []
+            last_dept = ""
+            for p in raw_parts:
+                m_dept = re.match(r"^([A-Z]+)", p)
+                if m_dept:
+                    last_dept = m_dept.group(1)
+                    courses.append(p)
+                elif last_dept:
+                    courses.append(f"{last_dept}{p}")
+                else:
+                    courses.append(p)
+            return cls(raw_token=token, unit_type=unit_type, courses=courses)
         return cls(raw_token=token, unit_type="SINGLE", courses=[clean])
 
     def is_completed(self, completed_set: Set[str]) -> bool:
@@ -119,6 +132,7 @@ class RequirementGroup:
     group_name: str
     courses_needed: int
     units: List[CourseUnit] = field(default_factory=list)
+    subgroups: Optional[List[Dict[str, Any]]] = None
 
 @dataclass
 class DegreeAuditResult:

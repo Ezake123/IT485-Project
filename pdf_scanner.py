@@ -1,8 +1,9 @@
 import pdfplumber
 import re
 from io import BytesIO
-from typing import List, Union
+from typing import List, Optional, Set, Dict, Any, Union, Tuple
 from models import CourseUnit, RequirementGroup, DegreeAuditResult, KNOWN_GENED_CATEGORIES
+from prerequisite_parser import normalize_id
 
 #-----------------------------------------------------------------
 # Description:
@@ -19,10 +20,6 @@ from models import CourseUnit, RequirementGroup, DegreeAuditResult, KNOWN_GENED_
 MAX_ALLOWED_PAGES = 20
 
 def extract_text_from_pdf_stream(pdf_file: Union[BytesIO, bytes]) -> List[str]:
-    """
-    Streams PDF pages one-by-one and flushes pdfminer cache immediately after each page.
-    Prevents Render 512MB Out-Of-Memory container crashes.
-    """
     lines = []
     stream = BytesIO(pdf_file) if isinstance(pdf_file, (bytes, bytearray)) else pdf_file
     with pdfplumber.open(stream) as pdf:
@@ -267,10 +264,40 @@ def required_course_scan(all_lines):
         collecting = False
         current_block_lines = []
 
+    saw_ee_major = False
+    in_ee_electives = False
+
     for line in all_lines:
         clean_line = line.strip()
         if not clean_line:
             continue
+
+        if re.search(r"ELECTRICAL\s+ENGINEERING\s+MAJOR", clean_line, re.IGNORECASE):
+            saw_ee_major = True
+            if not re.search(r"\*+ELECTIVES\*+", clean_line, re.IGNORECASE):
+                continue
+
+        # Stop scanning regular requirements only when hitting the EE Electives section
+        if (saw_ee_major and re.search(r"^\*+ELECTIVES\*+", clean_line, re.IGNORECASE)) or \
+           clean_line.lower() == "electrical engineering electives":
+            if not in_ee_electives:
+                finalize_block()
+                current_count = None
+                current_req_title = ""
+                accumulating_title = False
+                title_lines = []
+                expecting_needs_count = False
+                required_courses.append({"is_ee_electives": True})
+                in_ee_electives = True
+            continue
+
+        if in_ee_electives:
+            # Resume scanning when leaving the EE electives section (e.g. ACCOUNTING MINOR or GENERAL ELECTIVES)
+            if (re.search(r"\b[A-Z\s]{2,}\s+(?:MINOR|MAJOR)\b", clean_line) and "ELECTRICAL" not in clean_line.upper()) or \
+               re.search(r"^(?:GENERAL\s+ELECTIVES|SUMMARY\s+OF\s+COURSES|LEGEND\b)", clean_line, re.IGNORECASE):
+                in_ee_electives = False
+            else:
+                continue
 
         if accumulating_title:
             is_stop = False
@@ -335,6 +362,9 @@ def required_course_scan(all_lines):
 def normalize_uncounted_requirements(required_courses):
     normalized = []
     for item in required_courses:
+        if item.get("is_ee_electives"):
+            normalized.append(dict(item))
+            continue
         entry = dict(item)
         if entry.get("needed") is None:
             if normalized and normalized[-1].get("needed") is None:
@@ -414,19 +444,121 @@ def gen_ed_scan(all_lines: list) -> list[RequirementGroup]:
 
     return gen_ed_groups
 
+# Only seen Electrical Engineering with problem of their electives. 
+# This is a lazy fix
+EE_ELECTIVE_TOKENS = [
+    "ENGIN304", "ENGIN341", "ENGIN342", "ENGIN346", "ENGIN351",
+    "ENGIN435", "ENGIN442", "ENGIN446", "ENGIN448", "ENGIN451",
+    "ENGIN471", "ENGIN478", "ENGIN480"
+]
+
+THEMATIC_ELECTIVE_TOKENS = [
+    # Physics
+    "PHYSIC211", "PHYSIC214", "PHYSIC312", "PHYSIC350", "PHYSIC421",
+    # Chemistry (lecture & lab count as one course)
+    "CHEM115&CHEM117", "CHEM116&CHEM118", "CHEM251&CHEM255", "CHEM252&CHEM256", "CHEM311", "CHEM312",
+    # Biology
+    "BIOL111", "BIOL112", "BIOL210|BIOL212", "BIOL252|BIOL254", "BIOL290", "BIOL316|BIOL318",
+    # Environmental Science
+    "ENVSCI120&121", "ENVSCI122", "ENVSCI210", "ENVSCI225", "ENVSCI226", "ENVSCI260", "ENVSCI281"
+]
+
+def evaluate_elective_tokens(tokens: List[str], completed_courses: Set[str]) -> Tuple[List[CourseUnit], int]:
+    active_units: List[CourseUnit] = []
+    satisfied_count = 0
+    norm_completed = {normalize_id(c) for c in completed_courses}
+
+    for tok in tokens:
+        unit = CourseUnit.from_token(tok)
+        norm_unit_courses = [normalize_id(c) for c in unit.courses]
+
+        if unit.unit_type == "SINGLE":
+            cid = norm_unit_courses[0]
+            if cid in norm_completed:
+                satisfied_count += 1
+            else:
+                active_units.append(unit)
+
+        elif unit.unit_type == "OR":
+            if any(c in norm_completed for c in norm_unit_courses):
+                satisfied_count += 1
+            else:
+                active_units.append(unit)
+
+        elif unit.unit_type == "AND":
+            all_done = all(c in norm_completed for c in norm_unit_courses)
+            none_done = not any(c in norm_completed for c in norm_unit_courses)
+
+            if all_done:
+                satisfied_count += 1
+            elif none_done:
+                active_units.append(unit)
+            else:
+                # One is completed, but not both: break into standalone
+                for c_raw in unit.courses:
+                    if normalize_id(c_raw) not in norm_completed:
+                        active_units.append(CourseUnit.from_token(c_raw))
+
+    return active_units, satisfied_count
+
+def parse_electrical_engineering_electives(all_lines: List[str], completed_courses: Set[str]) -> Optional[RequirementGroup]:
+    joined_text = "\n".join(all_lines)
+    is_ee = bool(re.search(r"ELECTRICAL\s+ENGINEERING\s+MAJOR", joined_text, re.IGNORECASE)) and \
+            bool(re.search(r"ELECTIVES", joined_text, re.IGNORECASE))
+    if not is_ee:
+        return None
+
+    active_ee_units, ee_satisfied = evaluate_elective_tokens(EE_ELECTIVE_TOKENS, completed_courses)
+    active_thematic_units, thematic_satisfied = evaluate_elective_tokens(THEMATIC_ELECTIVE_TOKENS, completed_courses)
+
+    total_satisfied = ee_satisfied + thematic_satisfied
+    needed = max(0, 7 - total_satisfied)
+
+    subgroups_payload = [
+        {
+            "name": "Electrical Engineering Electives",
+            "category": "ENGIN",
+            "units": [u.raw_token for u in active_ee_units],
+            "options": [u.raw_token for u in active_ee_units]
+        },
+        {
+            "name": "Thematic Electives",
+            "category": "THEMATIC",
+            "units": [u.raw_token for u in active_thematic_units],
+            "options": [u.raw_token for u in active_thematic_units]
+        }
+    ]
+
+    return RequirementGroup(
+        group_name="Electrical Engineering Electives (Note: Choose at least 4 ENGIN courses and at least 2 from the Thematic Electives with the same course name)",
+        courses_needed=needed,
+        units=active_ee_units + active_thematic_units,
+        subgroups=subgroups_payload
+    )
+
 def build_audit_result(all_lines: list) -> DegreeAuditResult:
     completed = set(complete_course_scan(all_lines))
     earned = earned_credits_scan(all_lines)
     raw_blocks = normalize_uncounted_requirements(required_course_scan(all_lines))
 
+    ee_group = parse_electrical_engineering_electives(all_lines, completed)
+
     requirement_groups: list[RequirementGroup] = []
     req_idx = 1
+
     for block in raw_blocks:
+        # If this is the EE electives marker, place the consolidated EE group here
+        if block.get("is_ee_electives"):
+            if ee_group and ee_group.courses_needed > 0:
+                ee_group.group_name = f"Requirement {req_idx} - {ee_group.group_name}"
+                requirement_groups.append(ee_group)
+                req_idx += 1
+            continue
+
         needed = block.get("needed", 1)
         raw_candidates = block.get("courses", [])
         title = block.get("title", "").strip()
 
-        # Skip Intensive Language sub-requirements already handled under Gen Ed
         if re.search(r"intensive\s+language", title, re.IGNORECASE):
             continue
 
