@@ -35,7 +35,7 @@ This project is about creating an automated schedule planning tool for UMB stude
 git clone https://github.com/Ezake123/IT485-Project.git
 
 ## Presentation Slides
-https://drive.google.com/file/d/1-4MSmdxdamSlD_4dzVujztfPUeTPEwUZ/view?usp=sharing
+https://drive.google.com/file/d/1dUYGuy7_0fq4gWB6heuGLUuRpMKV_aj_/view?usp=sharing
 
 ## Acknowledgments
 - Built and architected with technical assistance from **Google Gemini**.
